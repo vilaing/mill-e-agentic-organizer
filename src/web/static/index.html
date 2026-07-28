@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Agent</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Student Agent</h1>
+    <div class="points-badge" id="points-badge">-- pts</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab-btn active" data-tab="chat">Chat</button>
+    <button class="tab-btn" data-tab="assignments">Assignments</button>
+    <button class="tab-btn" data-tab="rewards">Points &amp; Rewards</button>
+    <button class="tab-btn" data-tab="recruiting">Recruiting</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <main>
+    <!-- Chat -->
+    <section id="tab-chat" class="tab-panel active">
+      <div class="chat-log" id="chat-log"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="Ask about assignments, recruiting, your calendar..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <!-- Assignments -->
+    <section id="tab-assignments" class="tab-panel">
+      <div class="panel-header">
+        <div class="filter-group">
+          <select id="assignment-status-filter">
+            <option value="active" selected>Open + In progress</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="done">Done</option>
+            <option value="all">All</option>
+          </select>
+          <select id="assignment-sort">
+            <option value="due_date" selected>Sort: due date</option>
+            <option value="importance">Sort: importance</option>
+            <option value="difficulty">Sort: difficulty</option>
+          </select>
+        </div>
+        <button id="add-assignment-btn">+ Add assignment</button>
+      </div>
+      <div id="assignment-list" class="card-list"></div>
+    </section>
+
+    <!-- Points & Rewards -->
+    <section id="tab-rewards" class="tab-panel">
+      <h2>Awards</h2>
+      <div id="award-list" class="card-list"></div>
+      <div class="panel-header">
+        <button id="add-award-btn">+ Add custom award</button>
+      </div>
+
+      <div class="bank-row">
+        <div class="card bank-card">
+          <div class="bank-title">Break bank</div>
+          <div class="bank-value" id="break-bank-value">0 min banked</div>
+          <div class="bank-timer" id="break-timer-display">00:00</div>
+          <div class="card-actions">
+            <button id="break-timer-start">Start break</button>
+            <button id="break-timer-stop" class="secondary" disabled>Stop</button>
+          </div>
+        </div>
+
+        <div class="card bank-card">
+          <div class="bank-title">$$ bank</div>
+          <div class="bank-value" id="dollar-bank-value">$0.00 banked</div>
+          <form id="dollar-spend-form" class="dollar-spend-form">
+            <input type="number" id="dollar-spend-amount" min="0.01" step="0.01" placeholder="Amount spent" />
+            <input type="text" id="dollar-spend-reason" placeholder="What on? (optional)" />
+            <button type="submit">Spend</button>
+          </form>
+          <div id="dollar-transactions" class="transaction-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Recruiting -->
+    <section id="tab-recruiting" class="tab-panel">
+      <div class="panel-header">
+        <select id="recruiting-sort">
+          <option value="next_action_date" selected>Sort: next action date</option>
+          <option value="stage">Sort: stage</option>
+        </select>
+        <button id="add-recruiting-btn">+ Add / update entry</button>
+      </div>
+      <div id="recruiting-list" class="card-list"></div>
+    </section>
+
+    <!-- Settings -->
+    <section id="tab-settings" class="tab-panel">
+      <h2>Preferences</h2>
+      <form id="settings-form" class="settings-form">
+        <label>Reward style</label>
+        <select id="settings-reward-style">
+          <option value="mostly_encouragement">Mostly encouragement (reward starting)</option>
+          <option value="balanced">Balanced</option>
+          <option value="mostly_completion">Mostly completion (reward finishing)</option>
+        </select>
+
+        <label>Additional rules</label>
+        <textarea id="settings-additional-rules" rows="3" placeholder="Any custom instructions for the agent..."></textarea>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="settings-morning-reminders" />
+          Morning reminders
+        </label>
+
+        <button type="submit">Save preferences</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- First-time setup modal -->
+  <div id="setup-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Welcome! Let's set a few preferences.</h2>
+      <form id="setup-form">
+        <label>Reward style</label>
+        <select id="setup-reward-style">
+          <option value="mostly_encouragement">Mostly encouragement -- bigger reward for starting a task</option>
+          <option value="balanced" selected>Balanced -- even split</option>
+          <option value="mostly_completion">Mostly completion -- bigger reward for finishing</option>
+        </select>
+
+        <label>Any additional rules for the agent? (optional)</label>
+        <textarea id="setup-additional-rules" rows="3" placeholder="e.g. never email professors after 9pm"></textarea>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="setup-morning-reminders" checked />
+          Send me morning reminders
+        </label>
+
+        <button type="submit">Get started</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Generic modal for add forms -->
+  <div id="generic-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 id="generic-modal-title"></h2>
+      <form id="generic-modal-form"></form>
+    </div>
+  </div>
+
+  <!-- Redeem confirmation popup -->
+  <div id="redeem-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Reward redeemed!</h2>
+      <p id="redeem-modal-body"></p>
+      <div class="modal-actions">
+        <button id="redeem-modal-close">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

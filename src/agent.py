@@ -75,8 +75,16 @@ def run_tool(name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-def run_agent(user_prompt: str, max_turns: int = 8) -> str:
-    messages = [{"role": "user", "content": user_prompt}]
+def run_agent(user_prompt: str, history: list | None = None, max_turns: int = 8) -> tuple[str, list]:
+    """Run one turn of the agent loop.
+
+    `history` is the prior conversation (as returned by a previous call) so
+    callers -- like a chat UI -- can maintain multi-turn context. Returns
+    (reply_text, updated_history); pass the returned history into the next
+    call to continue the conversation.
+    """
+    messages = list(history) if history else []
+    messages.append({"role": "user", "content": user_prompt})
 
     for _ in range(max_turns):
         response = client.messages.create(
@@ -86,13 +94,14 @@ def run_agent(user_prompt: str, max_turns: int = 8) -> str:
             tools=ALL_TOOL_SCHEMAS,
             messages=messages,
         )
+        messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
             # Final answer: concatenate any text blocks.
-            return "".join(b.text for b in response.content if b.type == "text")
+            reply = "".join(b.text for b in response.content if b.type == "text")
+            return reply, messages
 
         # Claude wants to use one or more tools. Execute each, collect results.
-        messages.append({"role": "assistant", "content": response.content})
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
@@ -104,9 +113,10 @@ def run_agent(user_prompt: str, max_turns: int = 8) -> str:
                 })
         messages.append({"role": "user", "content": tool_results})
 
-    return "Reached max turns without a final answer."
+    return "Reached max turns without a final answer.", messages
 
 
 if __name__ == "__main__":
     prompt = " ".join(sys.argv[1:]) or "Give me a summary of what's due and what's pending in recruiting."
-    print(run_agent(prompt))
+    reply, _ = run_agent(prompt)
+    print(reply)

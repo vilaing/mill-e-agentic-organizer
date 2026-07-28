@@ -14,6 +14,8 @@ MIGRATIONS = [
     "ALTER TABLE preferences ADD COLUMN additional_rules TEXT DEFAULT ''",
     "ALTER TABLE preferences ADD COLUMN morning_reminders INTEGER DEFAULT 1",
     "ALTER TABLE preferences ADD COLUMN onboarding_completed INTEGER DEFAULT 0",
+    "ALTER TABLE awards ADD COLUMN break_minutes INTEGER DEFAULT 0",
+    "ALTER TABLE awards ADD COLUMN dollar_value REAL DEFAULT 0",
 ]
 
 
@@ -26,13 +28,17 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
-    with open(SCHEMA_PATH) as f:
-        conn.executescript(f.read())
+    # Migrations first: on an existing DB they backfill columns that
+    # schema.sql's INSERTs may already reference explicitly. On a fresh DB
+    # every statement here harmlessly no-ops (table doesn't exist yet) since
+    # schema.sql's CREATE TABLEs already include these columns directly.
     for stmt in MIGRATIONS:
         try:
             conn.execute(stmt)
         except sqlite3.OperationalError:
-            pass  # column already exists
+            pass  # column already exists, or table doesn't exist yet
+    with open(SCHEMA_PATH) as f:
+        conn.executescript(f.read())
     conn.commit()
     conn.close()
     print(f"Initialized/updated database at {DB_PATH}")

@@ -141,6 +141,10 @@ def list_assignments(status: str = "open") -> list[dict]:
     conn = get_conn()
     if status == "all":
         rows = conn.execute("SELECT * FROM assignments ORDER BY due_date").fetchall()
+    elif status == "active":
+        rows = conn.execute(
+            "SELECT * FROM assignments WHERE status IN ('open', 'in_progress') ORDER BY due_date"
+        ).fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM assignments WHERE status = ? ORDER BY due_date", (status,)
@@ -256,12 +260,12 @@ def list_awards(active_only: bool = True) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def add_award(name: str, cost: int, description: str = "") -> dict:
+def add_award(name: str, cost: int, description: str = "", break_minutes: int = 0, dollar_value: float = 0) -> dict:
     conn = get_conn()
     try:
         cur = conn.execute(
-            "INSERT INTO awards (name, description, cost, is_preset) VALUES (?, ?, ?, 0)",
-            (name, description, cost),
+            "INSERT INTO awards (name, description, cost, is_preset, break_minutes, dollar_value) VALUES (?, ?, ?, 0, ?, ?)",
+            (name, description, cost, break_minutes, dollar_value),
         )
         conn.commit()
         row_id = cur.lastrowid
@@ -269,7 +273,7 @@ def add_award(name: str, cost: int, description: str = "") -> dict:
         conn.close()
         return {"error": str(e)}
     conn.close()
-    return {"id": row_id, "name": name, "cost": cost, "status": "added"}
+    return {"id": row_id, "name": name, "cost": cost, "break_minutes": break_minutes, "dollar_value": dollar_value, "status": "added"}
 
 
 def deactivate_award(award_id: int) -> dict:
@@ -296,10 +300,91 @@ def redeem_award(award_id: int) -> dict:
                  (f"Redeemed: {award['name']}", -award["cost"]))
     conn.execute("INSERT INTO redemptions (award_id, points_spent) VALUES (?, ?)",
                  (award_id, award["cost"]))
+    break_minutes = award["break_minutes"] or 0
+    dollar_value = award["dollar_value"] or 0
+    if break_minutes or dollar_value:
+        conn.execute(
+            "UPDATE reward_banks SET break_minutes = break_minutes + ?, dollars = dollars + ?, updated_at = datetime('now') WHERE id = 1",
+            (break_minutes, dollar_value),
+        )
+    if dollar_value:
+        conn.execute(
+            "INSERT INTO dollar_transactions (amount, reason) VALUES (?, ?)",
+            (dollar_value, f"Redeemed: {award['name']}"),
+        )
     conn.commit()
     new_total = conn.execute("SELECT SUM(points) AS total FROM points_log").fetchone()["total"] or 0
+    banks = conn.execute("SELECT break_minutes, dollars FROM reward_banks WHERE id = 1").fetchone()
     conn.close()
-    return {"redeemed": award["name"], "points_spent": award["cost"], "remaining_points": new_total}
+    return {
+        "redeemed": award["name"],
+        "points_spent": award["cost"],
+        "remaining_points": new_total,
+        "break_minutes_added": break_minutes,
+        "dollar_value_added": dollar_value,
+        "break_bank_total": banks["break_minutes"] if banks else break_minutes,
+        "dollar_bank_total": banks["dollars"] if banks else dollar_value,
+    }
+
+
+# --- Reward banks (break time / $$ accumulated from redeeming awards) ---
+
+def get_reward_banks() -> dict:
+    conn = get_conn()
+    row = conn.execute("SELECT break_minutes, dollars FROM reward_banks WHERE id = 1").fetchone()
+    conn.close()
+    if row is None:
+        return {"break_minutes": 0, "dollars": 0.0}
+    return {"break_minutes": row["break_minutes"], "dollars": row["dollars"]}
+
+
+def spend_break_minutes(minutes: int) -> dict:
+    if minutes <= 0:
+        return {"error": "minutes must be positive"}
+    conn = get_conn()
+    row = conn.execute("SELECT break_minutes FROM reward_banks WHERE id = 1").fetchone()
+    available = row["break_minutes"] if row else 0
+    if minutes > available:
+        conn.close()
+        return {"error": "Not enough banked break time", "have": available, "need": minutes}
+    conn.execute(
+        "UPDATE reward_banks SET break_minutes = break_minutes - ?, updated_at = datetime('now') WHERE id = 1",
+        (minutes,),
+    )
+    conn.commit()
+    conn.close()
+    return {"break_minutes": available - minutes, "spent": minutes}
+
+
+def spend_dollars(amount: float, reason: str = "") -> dict:
+    if amount <= 0:
+        return {"error": "amount must be positive"}
+    conn = get_conn()
+    row = conn.execute("SELECT dollars FROM reward_banks WHERE id = 1").fetchone()
+    available = row["dollars"] if row else 0.0
+    if amount > available:
+        conn.close()
+        return {"error": "Not enough banked $$", "have": available, "need": amount}
+    conn.execute(
+        "UPDATE reward_banks SET dollars = dollars - ?, updated_at = datetime('now') WHERE id = 1",
+        (amount,),
+    )
+    conn.execute(
+        "INSERT INTO dollar_transactions (amount, reason) VALUES (?, ?)",
+        (-amount, reason or "Purchase"),
+    )
+    conn.commit()
+    conn.close()
+    return {"dollars": available - amount, "spent": amount}
+
+
+def list_dollar_transactions(limit: int = 10) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM dollar_transactions ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # --- Tool schemas for the Claude API ---
@@ -321,10 +406,10 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "list_assignments",
-        "description": "List assignments, filtered by status: 'open', 'in_progress', 'done', or 'all'.",
+        "description": "List assignments, filtered by status: 'open', 'in_progress', 'done', 'active' (open + in_progress), or 'all'.",
         "input_schema": {
             "type": "object",
-            "properties": {"status": {"type": "string", "enum": ["open", "in_progress", "done", "all"]}},
+            "properties": {"status": {"type": "string", "enum": ["open", "in_progress", "active", "done", "all"]}},
         },
     },
     {
@@ -445,13 +530,15 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "add_award",
-        "description": "Create a new custom award the user can redeem points for later.",
+        "description": "Create a new custom award the user can redeem points for later. Optionally mark it as a break-time or $$ award: redeeming it then banks break_minutes and/or dollar_value into the user's reward banks (see get_reward_banks) instead of (or in addition to) being a one-off reward.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
                 "cost": {"type": "integer"},
                 "description": {"type": "string"},
+                "break_minutes": {"type": "integer", "description": "Minutes of break time banked when redeemed. 0 if not a break award."},
+                "dollar_value": {"type": "number", "description": "Dollar amount banked when redeemed. 0 if not a $$ award."},
             },
             "required": ["name", "cost"],
         },
@@ -467,11 +554,45 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "redeem_award",
-        "description": "Redeem points for an award by its id. Fails if the user doesn't have enough points.",
+        "description": "Redeem points for an award by its id. Fails if the user doesn't have enough points. If the award has break_minutes or dollar_value, those get added to the user's reward banks.",
         "input_schema": {
             "type": "object",
             "properties": {"award_id": {"type": "integer"}},
             "required": ["award_id"],
+        },
+    },
+    {
+        "name": "get_reward_banks",
+        "description": "Get the user's current banked break-time (minutes) and $$ balances, accumulated from redeeming break/dollar-type awards.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "spend_break_minutes",
+        "description": "Deduct minutes from the user's banked break time (e.g. after they finish a break). Fails if they don't have that much banked.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"minutes": {"type": "integer"}},
+            "required": ["minutes"],
+        },
+    },
+    {
+        "name": "spend_dollars",
+        "description": "Deduct an amount from the user's banked $$ (e.g. when they make a purchase with it). Fails if they don't have that much banked.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number"},
+                "reason": {"type": "string", "description": "What the $$ was spent on."},
+            },
+            "required": ["amount"],
+        },
+    },
+    {
+        "name": "list_dollar_transactions",
+        "description": "List the user's most recent $$ bank activity (both money banked from redeeming $$ awards and money spent), newest first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer"}},
         },
     },
 ]
@@ -496,4 +617,8 @@ DISPATCH = {
     "add_award": add_award,
     "deactivate_award": deactivate_award,
     "redeem_award": redeem_award,
+    "get_reward_banks": get_reward_banks,
+    "spend_break_minutes": spend_break_minutes,
+    "spend_dollars": spend_dollars,
+    "list_dollar_transactions": list_dollar_transactions,
 }

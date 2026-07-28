@@ -1,0 +1,304 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-border: #262b36;
+  --text: #e8eaed;
+  --muted: #8b93a1;
+  --accent: #6c8dff;
+  --accent-hover: #85a1ff;
+  --danger: #ff6c6c;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.topbar h1 { font-size: 18px; margin: 0; }
+
+.points-badge {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 24px 0;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-group { display: flex; gap: 8px; }
+
+button {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover { background: var(--accent-hover); }
+
+button.secondary {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+}
+
+button.danger { background: var(--danger); color: #1a0000; }
+
+select, input[type="text"], textarea {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+/* Chat */
+.chat-log {
+  height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-msg {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #0f1115;
+}
+
+.chat-msg.agent {
+  align-self: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+}
+
+.chat-msg code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
+.chat-msg.typing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 16px;
+}
+
+.chat-msg.typing .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+.chat-msg.typing .dot:nth-child(2) { animation-delay: 0.2s; }
+.chat-msg.typing .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
+.chat-form { display: flex; gap: 8px; }
+.chat-form input { flex: 1; }
+
+/* Cards */
+.card-list { display: flex; flex-direction: column; gap: 10px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.card-title { font-weight: 600; }
+.card-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.card-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+.card-actions { display: flex; gap: 6px; margin-top: 10px; }
+
+.badge {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.empty-state { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* Reward banks */
+.bank-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.bank-card { display: flex; flex-direction: column; gap: 8px; }
+
+.bank-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.bank-value { font-size: 20px; font-weight: 700; }
+
+.bank-timer {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 28px;
+  color: var(--accent);
+}
+
+.dollar-spend-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.dollar-spend-form input { flex: 1 1 100px; width: 0; }
+
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.transaction-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
+.transaction-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-top: 1px solid var(--panel-border);
+}
+
+.transaction-reason { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transaction-amount { font-weight: 600; white-space: nowrap; }
+.transaction-amount.positive { color: #4ade80; }
+.transaction-amount.negative { color: var(--danger); }
+
+@media (max-width: 520px) {
+  .bank-row { grid-template-columns: 1fr; }
+}
+
+/* Settings form */
+.settings-form, #setup-form, #generic-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: min(480px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal h2 { margin-top: 0; font-size: 16px; }
+
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }

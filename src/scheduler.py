@@ -20,8 +20,8 @@ Keep it short and actionable. Don't send any emails unless something is truly ur
 
 def morning_briefing():
     print("Running morning briefing...")
-    result = run_agent(MORNING_PROMPT)
-    print(result)
+    reply, _ = run_agent(MORNING_PROMPT)
+    print(reply)
     # TODO: replace print with a real notification (email digest, Slack, push, etc.)
 
 

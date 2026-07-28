@@ -55,7 +55,15 @@ python -m src.db.db init
 python -m src.agent "What's due this week and what should I follow up on for recruiting?"
 ```
 
-### 6. Run it on a schedule
+### 6. Run the web app
+```bash
+python -m src.web.main
+```
+Then open http://127.0.0.1:8000. FastAPI serves both the JSON API (under
+`/api`) and a small static frontend (chat, assignments, points/rewards,
+recruiting, settings) -- no separate frontend build/toolchain needed.
+
+### 7. Run it on a schedule
 ```bash
 python -m src.scheduler
 ```
@@ -78,6 +86,9 @@ student-agent/
     db/
       schema.sql
       db.py
+    web/
+      main.py              # FastAPI app: REST API + serves the frontend
+      static/                # chat / assignments / rewards / recruiting / settings UI
   data/
     student_agent.db      # created on init
   requirements.txt

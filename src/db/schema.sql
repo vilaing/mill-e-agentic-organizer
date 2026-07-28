@@ -46,17 +46,19 @@ CREATE TABLE IF NOT EXISTS awards (
     cost INTEGER NOT NULL,
     is_preset INTEGER DEFAULT 0,
     active INTEGER DEFAULT 1,
+    break_minutes INTEGER DEFAULT 0, -- if >0, redeeming this award banks break time
+    dollar_value REAL DEFAULT 0,     -- if >0, redeeming this award banks $$ toward a purchase
     created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Base reward presets. Edit costs/names or deactivate freely -- users can also
 -- add their own custom awards via add_award.
-INSERT OR IGNORE INTO awards (name, description, cost, is_preset) VALUES
-    ('10-minute brain break', 'Step away and do whatever you want for 10 minutes', 5, 1),
-    ('$1 towards a for-fun purchase', 'Stack these up towards something you want', 3, 1),
-    ('Small snack/drink', 'Grab a small snack or drink', 15, 1),
-    ('One hour recreational break', 'An hour to do whatever you want', 25, 1),
-    ('Nice meal', 'Treat yourself to a nice meal', 60, 1);
+INSERT OR IGNORE INTO awards (name, description, cost, is_preset, break_minutes, dollar_value) VALUES
+    ('10-minute brain break', 'Step away and do whatever you want for 10 minutes', 5, 1, 10, 0),
+    ('$1 towards a for-fun purchase', 'Stack these up towards something you want', 3, 1, 0, 1),
+    ('Small snack/drink', 'Grab a small snack or drink', 15, 1, 0, 0),
+    ('One hour recreational break', 'An hour to do whatever you want', 25, 1, 60, 0),
+    ('Nice meal', 'Treat yourself to a nice meal', 60, 1, 0, 0);
 
 CREATE TABLE IF NOT EXISTS redemptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,4 +66,23 @@ CREATE TABLE IF NOT EXISTS redemptions (
     points_spent INTEGER NOT NULL,
     redeemed_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (award_id) REFERENCES awards(id)
+);
+
+-- Single-row table: running balances of break time and $$ banked up from
+-- redeeming break/dollar-type awards, spent down as the user uses them.
+CREATE TABLE IF NOT EXISTS reward_banks (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    break_minutes INTEGER DEFAULT 0,
+    dollars REAL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO reward_banks (id) VALUES (1);
+
+-- History of $$ bank activity: positive amount = banked (from redeeming a
+-- $$ award), negative = spent (a purchase).
+CREATE TABLE IF NOT EXISTS dollar_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    amount REAL NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
 );
