@@ -32,24 +32,54 @@
 
     <!-- Assignments -->
     <section id="tab-assignments" class="tab-panel">
-      <div class="panel-header">
-        <div class="filter-group">
-          <select id="assignment-status-filter">
-            <option value="active" selected>Open + In progress</option>
-            <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
-            <option value="done">Done</option>
-            <option value="all">All</option>
-          </select>
-          <select id="assignment-sort">
-            <option value="due_date" selected>Sort: due date</option>
-            <option value="importance">Sort: importance</option>
-            <option value="difficulty">Sort: difficulty</option>
-          </select>
+      <div id="assignment-list-view">
+        <div class="panel-header">
+          <div class="filter-group">
+            <select id="assignment-status-filter">
+              <option value="active" selected>Open + In progress</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In progress</option>
+              <option value="done">Done</option>
+              <option value="all">All</option>
+            </select>
+            <select id="assignment-sort">
+              <option value="due_date" selected>Sort: due date</option>
+              <option value="importance">Sort: importance</option>
+              <option value="difficulty">Sort: difficulty</option>
+            </select>
+          </div>
+          <button id="add-assignment-btn">+ Add assignment</button>
         </div>
-        <button id="add-assignment-btn">+ Add assignment</button>
+        <div id="assignment-list" class="card-list"></div>
       </div>
-      <div id="assignment-list" class="card-list"></div>
+
+      <!-- Assignment detail page -->
+      <div id="assignment-detail-view" class="hidden">
+        <button id="assignment-detail-back" class="secondary">&larr; Back</button>
+
+        <div class="detail-header">
+          <div>
+            <h2 id="detail-title"></h2>
+            <div class="card-sub" id="detail-sub"></div>
+          </div>
+          <span class="badge pts-badge" id="detail-points-badge"></span>
+        </div>
+
+        <div class="card-meta" id="detail-meta"></div>
+
+        <div class="card-actions" id="detail-actions"></div>
+
+        <h3>Milestones</h3>
+        <div id="detail-milestones-list" class="milestone-list"></div>
+        <form id="detail-add-milestone-form" class="add-milestone-form">
+          <input type="text" id="detail-new-milestone-title" placeholder="New milestone..." autocomplete="off" />
+          <button type="submit">Add</button>
+        </form>
+
+        <div class="danger-zone">
+          <button id="detail-delete-assignment" class="danger">Delete assignment</button>
+        </div>
+      </div>
     </section>
 
     <!-- Points & Rewards -->

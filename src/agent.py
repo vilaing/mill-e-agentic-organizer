@@ -43,6 +43,11 @@ Points and rewards:
 - Assignment points are calculated automatically from importance/difficulty
   and the user's reward_style; you don't need to (and shouldn't) pick the
   amount yourself for these two actions.
+- Assignments can have milestones (sub-tasks, e.g. "HTML page", "stylesheet"
+  for a website project) via add_milestone/list_milestones. When the user
+  says they've finished a specific milestone, call toggle_milestone -- this
+  awards that milestone's share of the assignment's points automatically,
+  same deterministic split as start/complete_assignment.
 - For things outside the assignment lifecycle (e.g. recruiting milestones),
   use add_points with your own judgment, keeping amounts in a similar range
   (roughly 2-50) to what assignments award.

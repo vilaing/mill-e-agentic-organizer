@@ -18,7 +18,7 @@ document.getElementById("tabs").addEventListener("click", (e) => {
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
   const tab = btn.dataset.tab;
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
-  if (tab === "assignments") loadAssignments();
+  if (tab === "assignments") showAssignmentListView();
   if (tab === "rewards") { loadAwards(); loadRewardBanks(); loadDollarTransactions(); }
   if (tab === "recruiting") loadRecruiting();
   if (tab === "settings") loadSettings();
@@ -227,32 +227,47 @@ async function loadAssignments() {
   }
   list.forEach((a) => {
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = "card clickable";
     const points = a.importance * a.difficulty * 2;
+    const earned = a.points_earned || 0;
+    const milestoneSummary = a.milestone_count > 0
+      ? ` &middot; milestones: ${a.milestones_done}/${a.milestone_count}`
+      : "";
     card.innerHTML = `
       <div class="card-top">
         <div>
           <div class="card-title">${escapeHtml(a.title)}</div>
           <div class="card-sub">${escapeHtml(a.course || "")}${a.due_date ? ` &middot; due ${escapeHtml(a.due_date)}` : ""}</div>
         </div>
-        <span class="badge pts-badge">${points} pts</span>
+        <span class="badge pts-badge">${earned}/${points} pts</span>
       </div>
-      <div class="card-meta">status: ${a.status} &middot; importance: ${a.importance} &middot; difficulty: ${a.difficulty}</div>
+      <div class="card-meta">status: ${a.status} &middot; importance: ${a.importance} &middot; difficulty: ${a.difficulty}${milestoneSummary}</div>
       <div class="card-actions"></div>
     `;
     stylePointsBadge(card.querySelector(".pts-badge"), points);
+    card.addEventListener("click", () => openAssignmentDetail(a.id));
     const actions = card.querySelector(".card-actions");
     if (a.status === "open") {
       const startBtn = document.createElement("button");
       startBtn.className = "secondary";
       startBtn.textContent = "Start";
-      startBtn.onclick = async () => { await api(`/assignments/${a.id}/start`, { method: "POST" }); loadAssignments(); refreshPoints(); };
+      startBtn.onclick = async (e) => {
+        e.stopPropagation();
+        await api(`/assignments/${a.id}/start`, { method: "POST" });
+        loadAssignments();
+        refreshPoints();
+      };
       actions.appendChild(startBtn);
     }
     if (a.status !== "done") {
       const doneBtn = document.createElement("button");
       doneBtn.textContent = "Complete";
-      doneBtn.onclick = async () => { await api(`/assignments/${a.id}/complete`, { method: "POST" }); loadAssignments(); refreshPoints(); };
+      doneBtn.onclick = async (e) => {
+        e.stopPropagation();
+        await api(`/assignments/${a.id}/complete`, { method: "POST" });
+        loadAssignments();
+        refreshPoints();
+      };
       actions.appendChild(doneBtn);
     }
     container.appendChild(card);
@@ -262,6 +277,112 @@ async function loadAssignments() {
 document.getElementById("assignment-status-filter").addEventListener("change", loadAssignments);
 document.getElementById("assignment-sort").addEventListener("change", loadAssignments);
 
+// --- Assignment detail view ---
+
+const assignmentListView = document.getElementById("assignment-list-view");
+const assignmentDetailView = document.getElementById("assignment-detail-view");
+let currentDetailAssignmentId = null;
+
+function showAssignmentListView() {
+  currentDetailAssignmentId = null;
+  assignmentDetailView.classList.add("hidden");
+  assignmentListView.classList.remove("hidden");
+  loadAssignments();
+}
+
+async function renderDetailMilestones() {
+  const list = await api(`/assignments/${currentDetailAssignmentId}/milestones`);
+  const container = document.getElementById("detail-milestones-list");
+  container.innerHTML = "";
+  if (list.length === 0) {
+    container.innerHTML = `<div class="empty-state">No milestones yet.</div>`;
+    return;
+  }
+  list.forEach((m) => {
+    const row = document.createElement("div");
+    row.className = "milestone-row";
+    row.innerHTML = `
+      <input type="checkbox" ${m.done ? "checked" : ""} />
+      <span class="milestone-title ${m.done ? "done" : ""}">${escapeHtml(m.title)}</span>
+      <span class="milestone-points">${m.points_awarded > 0 ? `+${m.points_awarded} pts` : ""}</span>
+      <button type="button" class="milestone-delete" title="Delete">&times;</button>
+    `;
+    row.querySelector("input").addEventListener("change", async () => {
+      await api(`/milestones/${m.id}/toggle`, { method: "POST" });
+      renderDetailMilestones();
+      renderAssignmentDetailHeader();
+      refreshPoints();
+    });
+    row.querySelector(".milestone-delete").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await api(`/milestones/${m.id}`, { method: "DELETE" });
+      renderDetailMilestones();
+    });
+    container.appendChild(row);
+  });
+}
+
+async function renderAssignmentDetailHeader() {
+  const a = await api(`/assignments/${currentDetailAssignmentId}`);
+  const points = a.importance * a.difficulty * 2;
+  const earned = a.points_earned || 0;
+
+  document.getElementById("detail-title").textContent = a.title;
+  document.getElementById("detail-sub").textContent = [a.course, a.due_date ? `due ${a.due_date}` : ""]
+    .filter(Boolean).join(" · ");
+  document.getElementById("detail-meta").textContent =
+    `status: ${a.status} · importance: ${a.importance} · difficulty: ${a.difficulty}`;
+
+  const badge = document.getElementById("detail-points-badge");
+  badge.textContent = `${earned}/${points} pts`;
+  stylePointsBadge(badge, points);
+
+  const actions = document.getElementById("detail-actions");
+  actions.innerHTML = "";
+  if (a.status === "open") {
+    const startBtn = document.createElement("button");
+    startBtn.className = "secondary";
+    startBtn.textContent = "Start";
+    startBtn.onclick = async () => { await api(`/assignments/${a.id}/start`, { method: "POST" }); renderAssignmentDetailHeader(); refreshPoints(); };
+    actions.appendChild(startBtn);
+  }
+  if (a.status !== "done") {
+    const doneBtn = document.createElement("button");
+    doneBtn.textContent = "Complete";
+    doneBtn.onclick = async () => { await api(`/assignments/${a.id}/complete`, { method: "POST" }); renderAssignmentDetailHeader(); refreshPoints(); };
+    actions.appendChild(doneBtn);
+  }
+}
+
+async function openAssignmentDetail(assignmentId) {
+  currentDetailAssignmentId = assignmentId;
+  assignmentListView.classList.add("hidden");
+  assignmentDetailView.classList.remove("hidden");
+  await renderAssignmentDetailHeader();
+  await renderDetailMilestones();
+}
+
+document.getElementById("assignment-detail-back").addEventListener("click", showAssignmentListView);
+
+document.getElementById("detail-add-milestone-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("detail-new-milestone-title");
+  const title = input.value.trim();
+  if (!title) return;
+  await api(`/assignments/${currentDetailAssignmentId}/milestones`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+  input.value = "";
+  renderDetailMilestones();
+});
+
+document.getElementById("detail-delete-assignment").addEventListener("click", async () => {
+  if (!confirm("Delete this assignment and its milestones? No points are awarded or removed.")) return;
+  await api(`/assignments/${currentDetailAssignmentId}`, { method: "DELETE" });
+  showAssignmentListView();
+});
+
 document.getElementById("add-assignment-btn").addEventListener("click", () => {
   openGenericModal("Add assignment", [
     { name: "title", label: "Title", placeholder: "Problem set 4" },
@@ -269,8 +390,14 @@ document.getElementById("add-assignment-btn").addEventListener("click", () => {
     { name: "due_date", label: "Due date", placeholder: "2026-08-01" },
     { name: "importance", label: "Importance (1-5)", type: "number", value: 3 },
     { name: "difficulty", label: "Difficulty (1-5)", type: "number", value: 3 },
+    { name: "milestones", label: "Milestones (one per line, optional)", type: "textarea", placeholder: "HTML page\nStylesheet\nJS wiring" },
   ], async (values) => {
-    await api("/assignments", { method: "POST", body: JSON.stringify(values) });
+    const { milestones, ...assignmentValues } = values;
+    const created = await api("/assignments", { method: "POST", body: JSON.stringify(assignmentValues) });
+    const titles = milestones.split("\n").map((t) => t.trim()).filter(Boolean);
+    for (const title of titles) {
+      await api(`/assignments/${created.id}/milestones`, { method: "POST", body: JSON.stringify({ title }) });
+    }
     loadAssignments();
   });
 });

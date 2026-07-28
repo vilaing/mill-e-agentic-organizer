@@ -5,10 +5,14 @@ what gets sent to the Claude API so it knows these tools exist.
 
 Points for assignments are DETERMINISTIC, not left to the model's judgment:
 total = importance * difficulty * POINTS_MULTIPLIER, split between starting
-and finishing the task according to the user's reward_style preference.
-This keeps the reward system consistent across runs. add_points() is still
-freeform/judgment-based for things that don't fit the assignment lifecycle
-(e.g. recruiting progress) -- that's an intentional, separate tradeoff.
+and finishing the task according to the user's reward_style preference. If
+the assignment has milestones, they carve out MILESTONE_POOL_FRACTION of
+that total (split evenly across them) and start/completion split the rest;
+with no milestones, start/completion still split 100%, unchanged. See
+_points_breakdown(). This keeps the reward system consistent across runs.
+add_points() is still freeform/judgment-based for things that don't fit the
+assignment lifecycle (e.g. recruiting progress) -- that's an intentional,
+separate tradeoff.
 """
 from src.db.db import get_conn
 
@@ -20,6 +24,12 @@ REWARD_STYLES = {
     "balanced": 0.5,
     "mostly_completion": 0.2,     # reward finishing; good for completion-driven gratification
 }
+
+# When an assignment has milestones, this fraction of its total points is
+# reserved for them (split evenly across however many exist); the rest still
+# splits between start/completion per reward_style, same as an assignment
+# with no milestones at all (which keeps 100% of its points in that split).
+MILESTONE_POOL_FRACTION = 0.5
 
 
 # --- Preferences ---
@@ -119,6 +129,34 @@ def _start_weight() -> float:
     return REWARD_STYLES[style]
 
 
+def _milestone_count(conn, assignment_id: int) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM milestones WHERE assignment_id = ?", (assignment_id,)
+    ).fetchone()["n"]
+
+
+def _points_breakdown(importance: int, difficulty: int, milestone_count: int) -> dict:
+    """Split an assignment's total points into start / completion / per-milestone
+    shares. With no milestones, start+completion split 100% (unchanged from
+    before milestones existed); with milestones, they split what's left after
+    the milestone pool."""
+    total = importance * difficulty * POINTS_MULTIPLIER
+    start_weight = _start_weight()
+    if milestone_count > 0:
+        milestone_pool = total * MILESTONE_POOL_FRACTION
+        start_end_pool = total - milestone_pool
+        per_milestone = milestone_pool / milestone_count
+    else:
+        start_end_pool = total
+        per_milestone = 0
+    return {
+        "total": total,
+        "start_points": round(start_end_pool * start_weight),
+        "completion_points": round(start_end_pool * (1 - start_weight)),
+        "per_milestone_points": round(per_milestone),
+    }
+
+
 # --- Assignments ---
 
 def add_assignment(title: str, course: str = "", due_date: str = "",
@@ -137,20 +175,52 @@ def add_assignment(title: str, course: str = "", due_date: str = "",
     return {"id": row_id, "title": title, "status": "added", "total_points_available": total}
 
 
+_ASSIGNMENTS_WITH_MILESTONES = """
+    SELECT a.*,
+        (SELECT COUNT(*) FROM milestones m WHERE m.assignment_id = a.id) AS milestone_count,
+        (SELECT COUNT(*) FROM milestones m WHERE m.assignment_id = a.id AND m.done = 1) AS milestones_done
+    FROM assignments a
+"""
+
+
 def list_assignments(status: str = "open") -> list[dict]:
     conn = get_conn()
     if status == "all":
-        rows = conn.execute("SELECT * FROM assignments ORDER BY due_date").fetchall()
+        rows = conn.execute(f"{_ASSIGNMENTS_WITH_MILESTONES} ORDER BY due_date").fetchall()
     elif status == "active":
         rows = conn.execute(
-            "SELECT * FROM assignments WHERE status IN ('open', 'in_progress') ORDER BY due_date"
+            f"{_ASSIGNMENTS_WITH_MILESTONES} WHERE a.status IN ('open', 'in_progress') ORDER BY due_date"
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM assignments WHERE status = ? ORDER BY due_date", (status,)
+            f"{_ASSIGNMENTS_WITH_MILESTONES} WHERE a.status = ? ORDER BY due_date", (status,)
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_assignment(assignment_id: int) -> dict:
+    conn = get_conn()
+    row = conn.execute(f"{_ASSIGNMENTS_WITH_MILESTONES} WHERE a.id = ?", (assignment_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return {"error": f"No assignment with id {assignment_id}"}
+    return dict(row)
+
+
+def delete_assignment(assignment_id: int) -> dict:
+    """Remove an assignment (and its milestones) entirely. Does not award or
+    claw back any points -- deleting is just removal, not completion."""
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": f"No assignment with id {assignment_id}"}
+    conn.execute("DELETE FROM milestones WHERE assignment_id = ?", (assignment_id,))
+    conn.execute("DELETE FROM assignments WHERE id = ?", (assignment_id,))
+    conn.commit()
+    conn.close()
+    return {"id": assignment_id, "status": "deleted"}
 
 
 def start_assignment(assignment_id: int) -> dict:
@@ -164,12 +234,15 @@ def start_assignment(assignment_id: int) -> dict:
         conn.close()
         return {"id": assignment_id, "status": row["status"], "note": "Already started or done; no points awarded."}
 
-    conn.execute("UPDATE assignments SET status = 'in_progress' WHERE id = ?", (assignment_id,))
+    milestone_count = _milestone_count(conn, assignment_id)
+    breakdown = _points_breakdown(row["importance"], row["difficulty"], milestone_count)
+    start_points = breakdown["start_points"]
+
+    conn.execute("UPDATE assignments SET status = 'in_progress', points_earned = points_earned + ? WHERE id = ?",
+                 (start_points, assignment_id))
     conn.commit()
     conn.close()
 
-    total = row["importance"] * row["difficulty"] * POINTS_MULTIPLIER
-    start_points = round(total * _start_weight())
     result = add_points(reason=f"Started '{row['title']}'", points=start_points) if start_points > 0 else {"total_points": get_points_total()["total_points"]}
     return {"id": assignment_id, "status": "in_progress", "points_awarded": start_points, "total_points": result["total_points"]}
 
@@ -185,14 +258,88 @@ def complete_assignment(assignment_id: int) -> dict:
         conn.close()
         return {"id": assignment_id, "status": "done", "note": "Already completed; no additional points."}
 
-    conn.execute("UPDATE assignments SET status = 'done' WHERE id = ?", (assignment_id,))
+    milestone_count = _milestone_count(conn, assignment_id)
+    breakdown = _points_breakdown(row["importance"], row["difficulty"], milestone_count)
+    completion_points = breakdown["completion_points"]
+
+    conn.execute("UPDATE assignments SET status = 'done', points_earned = points_earned + ? WHERE id = ?",
+                 (completion_points, assignment_id))
     conn.commit()
     conn.close()
 
-    total = row["importance"] * row["difficulty"] * POINTS_MULTIPLIER
-    completion_points = round(total * (1 - _start_weight()))
     result = add_points(reason=f"Completed '{row['title']}'", points=completion_points) if completion_points > 0 else {"total_points": get_points_total()["total_points"]}
     return {"id": assignment_id, "status": "done", "points_awarded": completion_points, "total_points": result["total_points"]}
+
+
+# --- Milestones ---
+
+def add_milestone(assignment_id: int, title: str) -> dict:
+    conn = get_conn()
+    assignment = conn.execute("SELECT id FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+    if assignment is None:
+        conn.close()
+        return {"error": f"No assignment with id {assignment_id}"}
+    cur = conn.execute(
+        "INSERT INTO milestones (assignment_id, title) VALUES (?, ?)", (assignment_id, title)
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return {"id": row_id, "assignment_id": assignment_id, "title": title, "done": False}
+
+
+def list_milestones(assignment_id: int) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM milestones WHERE assignment_id = ? ORDER BY id", (assignment_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_milestone(milestone_id: int) -> dict:
+    conn = get_conn()
+    conn.execute("DELETE FROM milestones WHERE id = ?", (milestone_id,))
+    conn.commit()
+    conn.close()
+    return {"id": milestone_id, "status": "deleted"}
+
+
+def toggle_milestone(milestone_id: int) -> dict:
+    """Check or uncheck a milestone, awarding/reversing its share of the
+    assignment's points. The per-milestone amount is fixed at the moment a
+    milestone is checked (based on the milestone count at that time) and
+    stored on the row, so unchecking always reverses exactly what was given
+    -- even if milestones were added or removed in between."""
+    conn = get_conn()
+    milestone = conn.execute("SELECT * FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
+    if milestone is None:
+        conn.close()
+        return {"error": f"No milestone with id {milestone_id}"}
+    assignment = conn.execute(
+        "SELECT * FROM assignments WHERE id = ?", (milestone["assignment_id"],)
+    ).fetchone()
+
+    if not milestone["done"]:
+        milestone_count = _milestone_count(conn, assignment["id"])
+        breakdown = _points_breakdown(assignment["importance"], assignment["difficulty"], milestone_count)
+        pts = breakdown["per_milestone_points"]
+        conn.execute("UPDATE milestones SET done = 1, points_awarded = ? WHERE id = ?", (pts, milestone_id))
+        conn.execute("UPDATE assignments SET points_earned = points_earned + ? WHERE id = ?", (pts, assignment["id"]))
+        conn.commit()
+        conn.close()
+        if pts > 0:
+            add_points(reason=f"Milestone: {milestone['title']} ({assignment['title']})", points=pts)
+        return {"id": milestone_id, "done": True, "points_awarded": pts}
+    else:
+        pts = milestone["points_awarded"]
+        conn.execute("UPDATE milestones SET done = 0, points_awarded = 0 WHERE id = ?", (milestone_id,))
+        conn.execute("UPDATE assignments SET points_earned = MAX(0, points_earned - ?) WHERE id = ?", (pts, assignment["id"]))
+        conn.commit()
+        conn.close()
+        if pts > 0:
+            add_points(reason=f"Unchecked milestone: {milestone['title']} ({assignment['title']})", points=-pts)
+        return {"id": milestone_id, "done": False, "points_awarded": 0}
 
 
 # --- Recruiting ---
@@ -413,6 +560,24 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "get_assignment",
+        "description": "Get a single assignment by id, including its milestone counts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"assignment_id": {"type": "integer"}},
+            "required": ["assignment_id"],
+        },
+    },
+    {
+        "name": "delete_assignment",
+        "description": "Delete an assignment and its milestones entirely. Does not award or claw back any points -- use this to remove a task, not complete_assignment.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"assignment_id": {"type": "integer"}},
+            "required": ["assignment_id"],
+        },
+    },
+    {
         "name": "start_assignment",
         "description": "Mark an assignment as started (in progress). Awards the 'starting' portion of its points based on the user's reward style -- call this when the user says they're beginning a task, not just when they add it.",
         "input_schema": {
@@ -428,6 +593,45 @@ TOOL_SCHEMAS = [
             "type": "object",
             "properties": {"assignment_id": {"type": "integer"}},
             "required": ["assignment_id"],
+        },
+    },
+    {
+        "name": "add_milestone",
+        "description": "Add a sub-task/milestone within an assignment (e.g. 'HTML page', 'stylesheet' for a website project). When an assignment has milestones, they carve out a share of its points split evenly across however many exist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "assignment_id": {"type": "integer"},
+                "title": {"type": "string"},
+            },
+            "required": ["assignment_id", "title"],
+        },
+    },
+    {
+        "name": "list_milestones",
+        "description": "List the milestones for an assignment, including which are done.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"assignment_id": {"type": "integer"}},
+            "required": ["assignment_id"],
+        },
+    },
+    {
+        "name": "toggle_milestone",
+        "description": "Check or uncheck a milestone by its id -- checking awards its share of the assignment's points, unchecking reverses that same amount. Call this when the user says they've finished (or wants to undo) a specific milestone.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"milestone_id": {"type": "integer"}},
+            "required": ["milestone_id"],
+        },
+    },
+    {
+        "name": "delete_milestone",
+        "description": "Delete a milestone from an assignment. Points already awarded for it are not clawed back.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"milestone_id": {"type": "integer"}},
+            "required": ["milestone_id"],
         },
     },
     {
@@ -601,8 +805,14 @@ TOOL_SCHEMAS = [
 DISPATCH = {
     "add_assignment": add_assignment,
     "list_assignments": list_assignments,
+    "get_assignment": get_assignment,
+    "delete_assignment": delete_assignment,
     "start_assignment": start_assignment,
     "complete_assignment": complete_assignment,
+    "add_milestone": add_milestone,
+    "list_milestones": list_milestones,
+    "toggle_milestone": toggle_milestone,
+    "delete_milestone": delete_milestone,
     "get_reward_style": get_reward_style,
     "set_reward_style": set_reward_style,
     "get_preferences": get_preferences,

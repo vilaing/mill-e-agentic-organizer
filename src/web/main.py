@@ -40,6 +40,10 @@ class AssignmentIn(BaseModel):
     difficulty: int = 3
 
 
+class MilestoneIn(BaseModel):
+    title: str
+
+
 class RecruitingIn(BaseModel):
     company: str
     role: str = ""
@@ -144,6 +148,16 @@ def add_assignment(body: AssignmentIn):
     return db_tool.add_assignment(body.title, body.course, body.due_date, body.importance, body.difficulty)
 
 
+@app.get("/api/assignments/{assignment_id}")
+def get_assignment(assignment_id: int):
+    return _or_404(db_tool.get_assignment(assignment_id))
+
+
+@app.delete("/api/assignments/{assignment_id}")
+def delete_assignment(assignment_id: int):
+    return _or_404(db_tool.delete_assignment(assignment_id))
+
+
 @app.post("/api/assignments/{assignment_id}/start")
 def start_assignment(assignment_id: int):
     return _or_404(db_tool.start_assignment(assignment_id))
@@ -152,6 +166,28 @@ def start_assignment(assignment_id: int):
 @app.post("/api/assignments/{assignment_id}/complete")
 def complete_assignment(assignment_id: int):
     return _or_404(db_tool.complete_assignment(assignment_id))
+
+
+# --- Milestones ---
+
+@app.get("/api/assignments/{assignment_id}/milestones")
+def list_milestones(assignment_id: int):
+    return db_tool.list_milestones(assignment_id)
+
+
+@app.post("/api/assignments/{assignment_id}/milestones")
+def add_milestone(assignment_id: int, body: MilestoneIn):
+    return _or_404(db_tool.add_milestone(assignment_id, body.title))
+
+
+@app.post("/api/milestones/{milestone_id}/toggle")
+def toggle_milestone(milestone_id: int):
+    return _or_404(db_tool.toggle_milestone(milestone_id))
+
+
+@app.delete("/api/milestones/{milestone_id}")
+def delete_milestone(milestone_id: int):
+    return db_tool.delete_milestone(milestone_id)
 
 
 # --- Recruiting ---

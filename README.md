@@ -71,6 +71,26 @@ This runs the agent daily with a fixed prompt (morning briefing). Swap in
 `cron` or a system service for real deployment instead of leaving a Python
 process running in the foreground.
 
+### 8. Run the MCP server
+```bash
+python -m src.mcp_server
+```
+Exposes every tool (assignments, points/rewards, recruiting, calendar, email)
+over the Model Context Protocol via stdio, so any MCP-compatible client can
+use them -- not just this repo's own agent loop. To point Claude Desktop at
+it, add to its config:
+```json
+{
+  "mcpServers": {
+    "student-agent": {
+      "command": "/path/to/student-agent/venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/path/to/student-agent"
+    }
+  }
+}
+```
+
 ## Project structure
 
 ```
@@ -79,6 +99,7 @@ student-agent/
     agent.py            # core agent loop (Claude API + tool use)
     config.py            # env var loading
     scheduler.py          # daily automated run
+    mcp_server.py          # MCP wrapper -- same tools, over the MCP protocol
     tools/
       calendar_tool.py    # Google Calendar read/write
       gmail_tool.py        # Gmail read/send
@@ -95,10 +116,12 @@ student-agent/
   .env.example
 ```
 
-## Extending this into an MCP server
+## MCP server
 
-Once the three tools work standalone, the natural next step is wrapping them
-in a custom MCP server (`mcp` Python SDK) so any MCP-compatible client — not
-just this script — can use them. That's a good "phase 2" for the resume
-writeup: same tool functions, exposed over the MCP protocol instead of
-called directly from `agent.py`.
+`mcp_server.py` wraps the exact same `TOOL_SCHEMAS`/`DISPATCH` tables from
+`src/tools/*.py` that `agent.py` uses, registering each function on an
+`MCPServer` (from the `mcp` SDK) with its existing name/description --
+no duplicate wrapper functions to maintain. This means any MCP-compatible
+client (Claude Desktop, another agent, etc.), not just this repo's own
+tool-use loop, can add/complete assignments, manage recruiting, redeem
+awards, check the calendar, or send email. See step 8 above to run it.

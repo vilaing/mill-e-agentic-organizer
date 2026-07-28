@@ -6,7 +6,23 @@ CREATE TABLE IF NOT EXISTS assignments (
     status TEXT DEFAULT 'open',    -- open | in_progress | done
     importance INTEGER DEFAULT 3,  -- 1-5, set when created
     difficulty INTEGER DEFAULT 3,  -- 1-5, set when created
+    points_earned INTEGER DEFAULT 0, -- running tally toward this assignment's total (start + milestones + completion)
     created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Optional sub-tasks within an assignment (e.g. "HTML page", "stylesheet").
+-- When present, they carve out a slice of the assignment's points (see
+-- MILESTONE_POOL_FRACTION in db_tool.py) split evenly across however many
+-- exist; points_awarded remembers exactly what a milestone earned so
+-- unchecking it can cleanly reverse that same amount.
+CREATE TABLE IF NOT EXISTS milestones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assignment_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    done INTEGER DEFAULT 0,
+    points_awarded INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (assignment_id) REFERENCES assignments(id)
 );
 
 CREATE TABLE IF NOT EXISTS recruiting (

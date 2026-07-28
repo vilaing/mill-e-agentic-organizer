@@ -16,6 +16,7 @@ MIGRATIONS = [
     "ALTER TABLE preferences ADD COLUMN onboarding_completed INTEGER DEFAULT 0",
     "ALTER TABLE awards ADD COLUMN break_minutes INTEGER DEFAULT 0",
     "ALTER TABLE awards ADD COLUMN dollar_value REAL DEFAULT 0",
+    "ALTER TABLE assignments ADD COLUMN points_earned INTEGER DEFAULT 0",
 ]
 
 
