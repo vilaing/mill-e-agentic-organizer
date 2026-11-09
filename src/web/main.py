@@ -6,30 +6,53 @@ Run with:
 or:
     uvicorn src.web.main:app --reload
 """
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
+from src import demo, point_rules
 from src.agent import run_agent
+from src.config import DEMO_MODE, GOOGLE_SIGNIN_ENABLED
+from src.db.db import init_db
+from src.google_oauth import SignInError
 from src.tools import db_tool
 
-app = FastAPI(title="Student Agent")
+logger = logging.getLogger(__name__)
+
+# The public demo has no reason to advertise its API.
+app = FastAPI(title="Mill-E Agentic Organizer", docs_url=None if DEMO_MODE else "/docs",
+              redoc_url=None if DEMO_MODE else "/redoc",
+              openapi_url=None if DEMO_MODE else "/openapi.json")
+
+if DEMO_MODE:
+    app.add_middleware(demo.SandboxMiddleware)
+else:
+    init_db()  # upgrades an existing local database in place; safe to rerun
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# Single-user app: conversation history and chat state live in memory for the
-# life of the process. Fine for local/personal use; would need a real session
-# store for multiple concurrent users.
-CHAT_HISTORY: list = []
+# Local single-user history, kept in memory for the life of the process. In
+# demo mode each visitor gets their own history from src/demo.py instead.
+_LOCAL_CHAT_HISTORY: list = []
+
+
+def _chat_history() -> list:
+    return demo.current_history() if DEMO_MODE else _LOCAL_CHAT_HISTORY
 
 
 # --- Schemas ---
 
 class ChatMessage(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class MilestoneIn(BaseModel):
+    title: str
+    point_percent: int | None = Field(default=None, ge=1, le=100)
 
 
 class AssignmentIn(BaseModel):
@@ -38,10 +61,7 @@ class AssignmentIn(BaseModel):
     due_date: str = ""
     importance: int = 3
     difficulty: int = 3
-
-
-class MilestoneIn(BaseModel):
-    title: str
+    milestones: list[MilestoneIn] = []
 
 
 class RecruitingIn(BaseModel):
@@ -61,6 +81,10 @@ class AwardIn(BaseModel):
     dollar_value: float = 0
 
 
+class RedeemIn(BaseModel):
+    quantity: int = Field(default=1, ge=1, le=db_tool.MAX_REDEEM_QUANTITY)
+
+
 class SpendBreakIn(BaseModel):
     minutes: int
 
@@ -72,7 +96,7 @@ class SpendDollarsIn(BaseModel):
 
 class SetupIn(BaseModel):
     reward_style: str
-    additional_rules: str = ""
+    additional_rules: str = Field(default="", max_length=2000)
     morning_reminders: bool = True
 
 
@@ -81,7 +105,7 @@ class RewardStyleIn(BaseModel):
 
 
 class AdditionalRulesIn(BaseModel):
-    additional_rules: str
+    additional_rules: str = Field(max_length=2000)
 
 
 class MorningRemindersIn(BaseModel):
@@ -98,18 +122,93 @@ def _or_404(result: dict) -> dict:
 
 @app.post("/api/chat")
 def chat(body: ChatMessage):
-    reply, updated_history = run_agent(body.message, history=CHAT_HISTORY)
-    CHAT_HISTORY[:] = updated_history
+    if DEMO_MODE:
+        limit_reason = demo.consume_message_quota()
+        if limit_reason:
+            raise HTTPException(status_code=429, detail=limit_reason)
+    history = _chat_history()
+    try:
+        reply, updated_history = run_agent(body.message, history=history)
+    except Exception:
+        logger.exception("Agent run failed")
+        raise HTTPException(status_code=503, detail="The assistant is unavailable right now. Please try again.")
+    history[:] = updated_history
     return {"reply": reply}
 
 
 @app.post("/api/chat/reset")
 def chat_reset():
-    CHAT_HISTORY.clear()
+    _chat_history().clear()
     return {"status": "cleared"}
 
 
+# --- Demo ---
+
+@app.get("/api/demo")
+def demo_status():
+    if not DEMO_MODE:
+        return {"demo": False}
+    return {
+        "demo": True,
+        "messages_left": demo.messages_left(),
+        "google": {"available": GOOGLE_SIGNIN_ENABLED, "email": demo.google_email()},
+    }
+
+
+@app.post("/api/demo/reset")
+def demo_reset():
+    if not DEMO_MODE:
+        raise HTTPException(status_code=404, detail="Not found")
+    if demo.google_email():
+        raise HTTPException(status_code=400, detail="Reset is only available for the sample data.")
+    demo.reset_current_sandbox()
+    return {"status": "reset"}
+
+
+# --- Google sign-in (hosted app) ---
+
+def _require_google_signin() -> None:
+    if not GOOGLE_SIGNIN_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/api/auth/google/start")
+def google_sign_in_start():
+    _require_google_signin()
+    return RedirectResponse(demo.begin_google_sign_in(), status_code=302)
+
+
+@app.get("/api/auth/google/callback")
+def google_sign_in_callback(state: str = "", code: str = "", error: str = ""):
+    _require_google_signin()
+    if error or not code:
+        return RedirectResponse("/app?google=cancelled", status_code=302)
+    try:
+        demo.finish_google_sign_in(state, code)
+    except SignInError as exc:
+        return RedirectResponse(f"/app?google={exc.reason}", status_code=302)
+    return RedirectResponse("/app", status_code=302)
+
+
+@app.post("/api/auth/google/sign-out")
+def google_sign_out():
+    _require_google_signin()
+    demo.sign_out_of_google()
+    return {"status": "signed_out"}
+
+
 # --- Preferences / setup ---
+
+_RULES_UNAVAILABLE = "Your rules weren't saved because the assistant is unavailable. Please try again."
+
+
+def _charge_rule_interpretation(rules: str) -> None:
+    """Interpreting rules calls Claude, so in the demo it counts as a chat message."""
+    if DEMO_MODE and point_rules.needs_interpretation(rules):
+        limit_reason = demo.consume_message_quota()
+        if limit_reason:
+            raise HTTPException(status_code=429, detail=limit_reason)
+
 
 @app.get("/api/preferences")
 def get_preferences():
@@ -118,7 +217,14 @@ def get_preferences():
 
 @app.post("/api/setup")
 def complete_setup(body: SetupIn):
-    return _or_404(db_tool.complete_setup(body.reward_style, body.additional_rules, body.morning_reminders))
+    _charge_rule_interpretation(body.additional_rules)
+    try:
+        return _or_404(point_rules.complete_setup(body.reward_style, body.additional_rules, body.morning_reminders))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Could not interpret rules during setup")
+        raise HTTPException(status_code=503, detail=_RULES_UNAVAILABLE)
 
 
 @app.post("/api/preferences/reward-style")
@@ -128,7 +234,12 @@ def set_reward_style(body: RewardStyleIn):
 
 @app.post("/api/preferences/additional-rules")
 def set_additional_rules(body: AdditionalRulesIn):
-    return db_tool.set_additional_rules(body.additional_rules)
+    _charge_rule_interpretation(body.additional_rules)
+    try:
+        return point_rules.save_additional_rules(body.additional_rules)
+    except Exception:
+        logger.exception("Could not interpret rules")
+        raise HTTPException(status_code=503, detail=_RULES_UNAVAILABLE)
 
 
 @app.post("/api/preferences/morning-reminders")
@@ -145,7 +256,10 @@ def list_assignments(status: str = "open"):
 
 @app.post("/api/assignments")
 def add_assignment(body: AssignmentIn):
-    return db_tool.add_assignment(body.title, body.course, body.due_date, body.importance, body.difficulty)
+    return _or_404(db_tool.add_assignment_with_milestones(
+        body.title, body.course, body.due_date, body.importance, body.difficulty,
+        [milestone.model_dump() for milestone in body.milestones],
+    ))
 
 
 @app.get("/api/assignments/{assignment_id}")
@@ -177,7 +291,7 @@ def list_milestones(assignment_id: int):
 
 @app.post("/api/assignments/{assignment_id}/milestones")
 def add_milestone(assignment_id: int, body: MilestoneIn):
-    return _or_404(db_tool.add_milestone(assignment_id, body.title))
+    return _or_404(db_tool.add_milestone(assignment_id, body.title, body.point_percent))
 
 
 @app.post("/api/milestones/{milestone_id}/toggle")
@@ -222,8 +336,8 @@ def add_award(body: AwardIn):
 
 
 @app.post("/api/awards/{award_id}/redeem")
-def redeem_award(award_id: int):
-    return _or_404(db_tool.redeem_award(award_id))
+def redeem_award(award_id: int, body: RedeemIn | None = None):
+    return _or_404(db_tool.redeem_award(award_id, body.quantity if body else 1))
 
 
 @app.post("/api/awards/{award_id}/deactivate")
@@ -259,7 +373,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
-def index():
+def home():
+    return FileResponse(STATIC_DIR / "home.html")
+
+
+@app.get("/app")
+def web_app():
     return FileResponse(STATIC_DIR / "index.html")
 
 

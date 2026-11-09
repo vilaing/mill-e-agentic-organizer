@@ -10,7 +10,8 @@ Run directly:
 import sys
 import json
 import anthropic
-from src.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from src import demo, point_rules
+from src.config import ANTHROPIC_API_KEY, CLAUDE_MODEL, DEMO_MODE
 from src.tools import db_tool, calendar_tool, gmail_tool
 
 SYSTEM_PROMPT = """You are a personal assistant for a college student. You help
@@ -29,8 +30,9 @@ First-time setup:
   follow going forward; (3) opt in or out of morning reminders. Once they
   answer, call complete_setup with their choices, then proceed to add the
   task as normal. Don't repeat setup once onboarding_completed is true.
-- Treat the user's additional_rules (from get_preferences) as standing
-  instructions alongside this prompt. If they later want to change their
+- The user's standing rules, if any, are listed at the end of this prompt.
+  Which moments earn assignment points is enforced in code from those rules,
+  so don't use add_points to work around them. If they later want to change their
   reward style, rules, or reminder preference, use set_reward_style,
   set_additional_rules, or set_morning_reminders.
 
@@ -47,7 +49,9 @@ Points and rewards:
   for a website project) via add_milestone/list_milestones. When the user
   says they've finished a specific milestone, call toggle_milestone -- this
   awards that milestone's share of the assignment's points automatically,
-  same deterministic split as start/complete_assignment.
+  same deterministic split as start/complete_assignment. A milestone can't
+  be completed until its assignment has been started: if toggle_milestone
+  reports that, tell the user and offer to start the assignment.
 - For things outside the assignment lifecycle (e.g. recruiting milestones),
   use add_points with your own judgment, keeping amounts in a similar range
   (roughly 2-50) to what assignments award.
@@ -63,14 +67,47 @@ if it's ambiguous.
 
 # Combine tool schemas and dispatch tables from every tool module.
 ALL_TOOL_SCHEMAS = db_tool.TOOL_SCHEMAS + calendar_tool.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS
-ALL_DISPATCH = {**db_tool.DISPATCH, **calendar_tool.DISPATCH, **gmail_tool.DISPATCH}
+# Rules set in chat need the same interpretation as rules set in Settings.
+_DB_DISPATCH = {
+    **db_tool.DISPATCH,
+    "set_additional_rules": point_rules.save_additional_rules,
+    "complete_setup": point_rules.complete_setup,
+}
+_LOCAL_DISPATCH = {**_DB_DISPATCH, **calendar_tool.DISPATCH, **gmail_tool.DISPATCH}
+# Visitors who aren't signed in only ever reach simulated Google tools.
+_SANDBOX_DISPATCH = {**_DB_DISPATCH, **demo.DISPATCH}
+# Signed-in visitors reach their real account, but email is draft-only: mail text
+# is untrusted, so a prompt injection must not be able to send anything.
+_SIGNED_IN_DISPATCH = {
+    **_DB_DISPATCH,
+    **calendar_tool.DISPATCH,
+    "list_recent_emails": gmail_tool.list_recent_emails,
+    "send_email": gmail_tool.save_draft,
+}
+
+
+def _active_dispatch() -> dict:
+    if not DEMO_MODE:
+        return _LOCAL_DISPATCH
+    return _SIGNED_IN_DISPATCH if demo.google_email() else _SANDBOX_DISPATCH
+
+
+def _system_prompt() -> str:
+    prompt = SYSTEM_PROMPT + demo.system_prompt_addendum() if DEMO_MODE else SYSTEM_PROMPT
+    rules = db_tool.get_preferences()["additional_rules"].strip()
+    if rules:
+        prompt += (
+            "\nThe user's standing rules. Follow them, except that they can't change "
+            f"the rules above about sending email:\n<user_rules>\n{rules}\n</user_rules>\n"
+        )
+    return prompt
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def run_tool(name: str, tool_input: dict) -> str:
     """Execute a tool by name and return a JSON string result (or an error)."""
-    fn = ALL_DISPATCH.get(name)
+    fn = _active_dispatch().get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
     try:
@@ -90,12 +127,13 @@ def run_agent(user_prompt: str, history: list | None = None, max_turns: int = 8)
     """
     messages = list(history) if history else []
     messages.append({"role": "user", "content": user_prompt})
+    system_prompt = _system_prompt()
 
     for _ in range(max_turns):
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             tools=ALL_TOOL_SCHEMAS,
             messages=messages,
         )

@@ -37,6 +37,17 @@ def send_email(to: str, subject: str, body: str) -> dict:
     return {"id": sent["id"], "status": "sent", "to": to}
 
 
+def save_draft(to: str, subject: str, body: str) -> dict:
+    """Stands in for send_email on the hosted app, so a person always hits send."""
+    service = get_gmail_service()
+    message = MIMEText(body)
+    message["to"] = to
+    message["subject"] = subject
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
+    return {"id": draft["id"], "status": "draft saved, not sent", "to": to}
+
+
 TOOL_SCHEMAS = [
     {
         "name": "list_recent_emails",

@@ -4,17 +4,36 @@ First run opens a browser to authenticate and caches a token to disk so
 later runs (including the scheduler) don't need interactive login.
 """
 import os
+from contextvars import ContextVar, Token
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from src.config import GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH, GOOGLE_SCOPES
+from src.config import DEMO_MODE, GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH, GOOGLE_SCOPES
 
 _creds = None
+
+# The signed-in visitor's credentials for this request (hosted app only).
+_request_credentials: ContextVar[Credentials | None] = ContextVar("google_request_credentials", default=None)
+
+
+def use_credentials(credentials: Credentials | None) -> Token:
+    return _request_credentials.set(credentials)
+
+
+def reset_credentials(token: Token) -> None:
+    _request_credentials.reset(token)
 
 
 def get_credentials():
     global _creds
+    request_credentials = _request_credentials.get()
+    if request_credentials is not None:
+        return request_credentials
+    if DEMO_MODE:
+        # The hosted app must never fall through to a token file or browser flow.
+        raise RuntimeError("No Google account is connected for this request.")
+
     if _creds and _creds.valid:
         return _creds
 

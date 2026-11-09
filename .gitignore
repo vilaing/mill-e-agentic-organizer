@@ -2,6 +2,7 @@
 credentials.json
 token.json
 data/*.db
+data/sandboxes/
 __pycache__/
 *.pyc
 .venv/

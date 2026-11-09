@@ -8,12 +8,17 @@ total = importance * difficulty * POINTS_MULTIPLIER, split between starting
 and finishing the task according to the user's reward_style preference. If
 the assignment has milestones, they carve out MILESTONE_POOL_FRACTION of
 that total (split evenly across them) and start/completion split the rest;
-with no milestones, start/completion still split 100%, unchanged. See
-_points_breakdown(). This keeps the reward system consistent across runs.
+with no milestones, start/completion still split 100%, unchanged. A milestone
+can instead set point_percent, a custom share of the assignment's total, with
+start/completion splitting whatever remains. See _points_breakdown(). This
+keeps the reward system consistent across runs.
 add_points() is still freeform/judgment-based for things that don't fit the
 assignment lifecycle (e.g. recruiting progress) -- that's an intentional,
 separate tradeoff.
 """
+from fractions import Fraction
+from math import floor
+
 from src.db.db import get_conn
 
 POINTS_MULTIPLIER = 2  # importance(1-5) * difficulty(1-5) * this = 2-50 pts per task
@@ -30,6 +35,8 @@ REWARD_STYLES = {
 # splits between start/completion per reward_style, same as an assignment
 # with no milestones at all (which keeps 100% of its points in that split).
 MILESTONE_POOL_FRACTION = 0.5
+
+MAX_REDEEM_QUANTITY = 99
 
 
 # --- Preferences ---
@@ -67,6 +74,10 @@ def get_preferences() -> dict:
             "additional_rules": "",
             "morning_reminders": True,
             "onboarding_completed": False,
+            "points_on_start": True,
+            "points_on_milestones": True,
+            "points_on_completion": True,
+            "point_rules_summary": "",
         }
     return {
         "reward_style": row["reward_style"],
@@ -74,7 +85,23 @@ def get_preferences() -> dict:
         "additional_rules": row["additional_rules"] or "",
         "morning_reminders": bool(row["morning_reminders"]),
         "onboarding_completed": bool(row["onboarding_completed"]),
+        "points_on_start": bool(row["points_on_start"]),
+        "points_on_milestones": bool(row["points_on_milestones"]),
+        "points_on_completion": bool(row["points_on_completion"]),
+        "point_rules_summary": row["point_rules_summary"] or "",
     }
+
+
+def set_point_rules(points_on_start: bool, points_on_milestones: bool, points_on_completion: bool, summary: str) -> None:
+    """Store which moments earn points. Written by src/point_rules.py, not a chat tool."""
+    conn = get_conn()
+    conn.execute(
+        """UPDATE preferences SET points_on_start = ?, points_on_milestones = ?, points_on_completion = ?,
+           point_rules_summary = ?, updated_at = datetime('now') WHERE id = 1""",
+        (int(points_on_start), int(points_on_milestones), int(points_on_completion), summary),
+    )
+    conn.commit()
+    conn.close()
 
 
 def complete_setup(reward_style: str, additional_rules: str = "", morning_reminders: bool = True) -> dict:
@@ -129,31 +156,81 @@ def _start_weight() -> float:
     return REWARD_STYLES[style]
 
 
-def _milestone_count(conn, assignment_id: int) -> int:
-    return conn.execute(
-        "SELECT COUNT(*) AS n FROM milestones WHERE assignment_id = ?", (assignment_id,)
-    ).fetchone()["n"]
+def _milestone_percents(conn, assignment_id: int) -> list[int | None]:
+    """Each milestone's custom percent (None = default), oldest first."""
+    rows = conn.execute(
+        "SELECT point_percent FROM milestones WHERE assignment_id = ? ORDER BY id", (assignment_id,)
+    ).fetchall()
+    return [row["point_percent"] for row in rows]
 
 
-def _points_breakdown(importance: int, difficulty: int, milestone_count: int) -> dict:
+def _default_milestone_percent(milestone_count: int) -> Fraction:
+    """An even slice of the default pool. Exact fractions keep point rounding
+    stable; floats like 50/6 can tip a value across a rounding boundary."""
+    return Fraction(MILESTONE_POOL_FRACTION) * 100 / max(milestone_count, 1)
+
+
+def _milestone_total_percent(percents: list[int | None]) -> Fraction:
+    """Share of an assignment's points its milestones use, before any scaling."""
+    default_percent = _default_milestone_percent(len(percents))
+    return sum((default_percent if percent is None else Fraction(percent) for percent in percents), Fraction(0))
+
+
+def _milestone_percent_error(percents: list[int | None]) -> str | None:
+    total = _milestone_total_percent(percents)
+    if total > 100:
+        return f"Milestones would use {round(total)}% of this assignment's points. Keep the total at 100% or less."
+    return None
+
+
+def _whole_numbers_summing_to_total(amounts: list[Fraction]) -> list[int]:
+    """Round down, then hand the leftover points to the largest fractions.
+    Rounding each part on its own can lose points (four shares of 4.5 from 18
+    round to 16). Ties go to the earliest entry."""
+    rounded = [floor(amount) for amount in amounts]
+    leftover = int(sum(amounts)) - sum(rounded)
+    largest_first = sorted(range(len(amounts)), key=lambda i: (rounded[i] - amounts[i], i))
+    for index in largest_first[:leftover]:
+        rounded[index] += 1
+    return rounded
+
+
+def _points_breakdown(importance: int, difficulty: int, milestone_percents: list[int | None]) -> dict:
     """Split an assignment's total points into start / completion / per-milestone
-    shares. With no milestones, start+completion split 100% (unchanged from
-    before milestones existed); with milestones, they split what's left after
-    the milestone pool."""
+    shares that always add up to the total. With no milestones, start+completion
+    split 100%; with milestones, they split what's left after the milestones'
+    shares. A moment the user's rules turned off passes its points to the others."""
     total = importance * difficulty * POINTS_MULTIPLIER
-    start_weight = _start_weight()
-    if milestone_count > 0:
-        milestone_pool = total * MILESTONE_POOL_FRACTION
-        start_end_pool = total - milestone_pool
-        per_milestone = milestone_pool / milestone_count
+    prefs = get_preferences()
+    on_start, on_completion = prefs["points_on_start"], prefs["points_on_completion"]
+    active_percents = milestone_percents if prefs["points_on_milestones"] else []
+
+    used_percent = _milestone_total_percent(active_percents)
+    only_milestones = bool(active_percents) and not on_start and not on_completion
+    # Scale up if milestones are the only moment left. Scale down if deleting a
+    # milestone pushed the rest over 100%.
+    scale = 100 / used_percent if only_milestones or used_percent > 100 else Fraction(1)
+    default_percent = _default_milestone_percent(len(active_percents))
+    milestone_amounts = [
+        total * (default_percent if percent is None else percent) * scale / 100
+        for percent in active_percents
+    ] or [Fraction(0)] * len(milestone_percents)
+
+    pool = total - sum(milestone_amounts, Fraction(0))
+    if on_start and on_completion:
+        start_amount = pool * Fraction(str(_start_weight()))
     else:
-        start_end_pool = total
-        per_milestone = 0
+        start_amount = pool if on_start else Fraction(0)
+    completion_amount = pool - start_amount
+
+    completion_points, start_points, *milestone_points = _whole_numbers_summing_to_total(
+        [completion_amount, start_amount, *milestone_amounts]
+    )
     return {
         "total": total,
-        "start_points": round(start_end_pool * start_weight),
-        "completion_points": round(start_end_pool * (1 - start_weight)),
-        "per_milestone_points": round(per_milestone),
+        "start_points": start_points,
+        "completion_points": completion_points,
+        "milestone_points": milestone_points,
     }
 
 
@@ -173,6 +250,24 @@ def add_assignment(title: str, course: str = "", due_date: str = "",
     conn.close()
     total = importance * difficulty * POINTS_MULTIPLIER
     return {"id": row_id, "title": title, "status": "added", "total_points_available": total}
+
+
+def add_assignment_with_milestones(title: str, course: str, due_date: str, importance: int,
+                                   difficulty: int, milestones: list[dict]) -> dict:
+    """Create an assignment and its milestones, checking the full set of
+    percentages first so a bad total can't leave a half-created assignment."""
+    error = _milestone_percent_error([m["point_percent"] for m in milestones])
+    if error:
+        return {"error": error}
+    created = add_assignment(title, course, due_date, importance, difficulty)
+    conn = get_conn()
+    conn.executemany(
+        "INSERT INTO milestones (assignment_id, title, point_percent) VALUES (?, ?, ?)",
+        [(created["id"], m["title"], m["point_percent"]) for m in milestones],
+    )
+    conn.commit()
+    conn.close()
+    return created
 
 
 _ASSIGNMENTS_WITH_MILESTONES = """
@@ -234,8 +329,7 @@ def start_assignment(assignment_id: int) -> dict:
         conn.close()
         return {"id": assignment_id, "status": row["status"], "note": "Already started or done; no points awarded."}
 
-    milestone_count = _milestone_count(conn, assignment_id)
-    breakdown = _points_breakdown(row["importance"], row["difficulty"], milestone_count)
+    breakdown = _points_breakdown(row["importance"], row["difficulty"], _milestone_percents(conn, assignment_id))
     start_points = breakdown["start_points"]
 
     conn.execute("UPDATE assignments SET status = 'in_progress', points_earned = points_earned + ? WHERE id = ?",
@@ -258,8 +352,7 @@ def complete_assignment(assignment_id: int) -> dict:
         conn.close()
         return {"id": assignment_id, "status": "done", "note": "Already completed; no additional points."}
 
-    milestone_count = _milestone_count(conn, assignment_id)
-    breakdown = _points_breakdown(row["importance"], row["difficulty"], milestone_count)
+    breakdown = _points_breakdown(row["importance"], row["difficulty"], _milestone_percents(conn, assignment_id))
     completion_points = breakdown["completion_points"]
 
     conn.execute("UPDATE assignments SET status = 'done', points_earned = points_earned + ? WHERE id = ?",
@@ -273,19 +366,26 @@ def complete_assignment(assignment_id: int) -> dict:
 
 # --- Milestones ---
 
-def add_milestone(assignment_id: int, title: str) -> dict:
+def add_milestone(assignment_id: int, title: str, point_percent: int | None = None) -> dict:
+    if point_percent is not None and not 1 <= point_percent <= 100:
+        return {"error": "point_percent must be a whole number from 1 to 100."}
     conn = get_conn()
     assignment = conn.execute("SELECT id FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
     if assignment is None:
         conn.close()
         return {"error": f"No assignment with id {assignment_id}"}
+    error = _milestone_percent_error([*_milestone_percents(conn, assignment_id), point_percent])
+    if error:
+        conn.close()
+        return {"error": error}
     cur = conn.execute(
-        "INSERT INTO milestones (assignment_id, title) VALUES (?, ?)", (assignment_id, title)
+        "INSERT INTO milestones (assignment_id, title, point_percent) VALUES (?, ?, ?)",
+        (assignment_id, title, point_percent),
     )
     conn.commit()
     row_id = cur.lastrowid
     conn.close()
-    return {"id": row_id, "assignment_id": assignment_id, "title": title, "done": False}
+    return {"id": row_id, "assignment_id": assignment_id, "title": title, "point_percent": point_percent, "done": False}
 
 
 def list_milestones(assignment_id: int) -> list[dict]:
@@ -321,9 +421,16 @@ def toggle_milestone(milestone_id: int) -> dict:
     ).fetchone()
 
     if not milestone["done"]:
-        milestone_count = _milestone_count(conn, assignment["id"])
-        breakdown = _points_breakdown(assignment["importance"], assignment["difficulty"], milestone_count)
-        pts = breakdown["per_milestone_points"]
+        if assignment["status"] == "open":
+            conn.close()
+            return {"error": "Start this assignment before completing its milestones."}
+        sibling_ids =[row["id"] for row in conn.execute(
+            "SELECT id FROM milestones WHERE assignment_id = ? ORDER BY id", (assignment["id"],)
+        ).fetchall()]
+        breakdown = _points_breakdown(
+            assignment["importance"], assignment["difficulty"], _milestone_percents(conn, assignment["id"])
+        )
+        pts = breakdown["milestone_points"][sibling_ids.index(milestone_id)]
         conn.execute("UPDATE milestones SET done = 1, points_awarded = ? WHERE id = ?", (pts, milestone_id))
         conn.execute("UPDATE assignments SET points_earned = points_earned + ? WHERE id = ?", (pts, assignment["id"]))
         conn.commit()
@@ -431,7 +538,9 @@ def deactivate_award(award_id: int) -> dict:
     return {"id": award_id, "status": "deactivated"}
 
 
-def redeem_award(award_id: int) -> dict:
+def redeem_award(award_id: int, quantity: int = 1) -> dict:
+    if not 1 <= quantity <= MAX_REDEEM_QUANTITY:
+        return {"error": f"Quantity must be from 1 to {MAX_REDEEM_QUANTITY}."}
     conn = get_conn()
     award = conn.execute("SELECT * FROM awards WHERE id = ? AND active = 1", (award_id,)).fetchone()
     if award is None:
@@ -439,16 +548,18 @@ def redeem_award(award_id: int) -> dict:
         return {"error": f"No active award with id {award_id}"}
 
     total = conn.execute("SELECT SUM(points) AS total FROM points_log").fetchone()["total"] or 0
-    if total < award["cost"]:
+    cost = award["cost"] * quantity
+    if total < cost:
         conn.close()
-        return {"error": "Not enough points", "have": total, "need": award["cost"]}
+        return {"error": f"Not enough points: this costs {cost} and you have {total}.", "have": total, "need": cost}
 
+    label = f"{quantity} x {award['name']}" if quantity > 1 else award["name"]
     conn.execute("INSERT INTO points_log (reason, points) VALUES (?, ?)",
-                 (f"Redeemed: {award['name']}", -award["cost"]))
-    conn.execute("INSERT INTO redemptions (award_id, points_spent) VALUES (?, ?)",
-                 (award_id, award["cost"]))
-    break_minutes = award["break_minutes"] or 0
-    dollar_value = award["dollar_value"] or 0
+                 (f"Redeemed: {label}", -cost))
+    conn.executemany("INSERT INTO redemptions (award_id, points_spent) VALUES (?, ?)",
+                     [(award_id, award["cost"])] * quantity)
+    break_minutes = (award["break_minutes"] or 0) * quantity
+    dollar_value = (award["dollar_value"] or 0) * quantity
     if break_minutes or dollar_value:
         conn.execute(
             "UPDATE reward_banks SET break_minutes = break_minutes + ?, dollars = dollars + ?, updated_at = datetime('now') WHERE id = 1",
@@ -457,7 +568,7 @@ def redeem_award(award_id: int) -> dict:
     if dollar_value:
         conn.execute(
             "INSERT INTO dollar_transactions (amount, reason) VALUES (?, ?)",
-            (dollar_value, f"Redeemed: {award['name']}"),
+            (dollar_value, f"Redeemed: {label}"),
         )
     conn.commit()
     new_total = conn.execute("SELECT SUM(points) AS total FROM points_log").fetchone()["total"] or 0
@@ -465,7 +576,8 @@ def redeem_award(award_id: int) -> dict:
     conn.close()
     return {
         "redeemed": award["name"],
-        "points_spent": award["cost"],
+        "quantity": quantity,
+        "points_spent": cost,
         "remaining_points": new_total,
         "break_minutes_added": break_minutes,
         "dollar_value_added": dollar_value,
@@ -597,12 +709,13 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "add_milestone",
-        "description": "Add a sub-task/milestone within an assignment (e.g. 'HTML page', 'stylesheet' for a website project). When an assignment has milestones, they carve out a share of its points split evenly across however many exist.",
+        "description": "Add a sub-task/milestone within an assignment (e.g. 'HTML page', 'stylesheet' for a website project). When an assignment has milestones, they carve out a share of its points split evenly across however many exist, unless point_percent is given.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "assignment_id": {"type": "integer"},
                 "title": {"type": "string"},
+                "point_percent": {"type": "integer", "description": "Optional custom share of the assignment's total points, 1-100. Only set this if the user asks for one."},
             },
             "required": ["assignment_id", "title"],
         },
@@ -618,7 +731,7 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "toggle_milestone",
-        "description": "Check or uncheck a milestone by its id -- checking awards its share of the assignment's points, unchecking reverses that same amount. Call this when the user says they've finished (or wants to undo) a specific milestone.",
+        "description": "Check or uncheck a milestone by its id -- checking awards its share of the assignment's points, unchecking reverses that same amount. Call this when the user says they've finished (or wants to undo) a specific milestone. A milestone can't be checked until its assignment has been started.",
         "input_schema": {
             "type": "object",
             "properties": {"milestone_id": {"type": "integer"}},
@@ -761,7 +874,10 @@ TOOL_SCHEMAS = [
         "description": "Redeem points for an award by its id. Fails if the user doesn't have enough points. If the award has break_minutes or dollar_value, those get added to the user's reward banks.",
         "input_schema": {
             "type": "object",
-            "properties": {"award_id": {"type": "integer"}},
+            "properties": {
+                "award_id": {"type": "integer"},
+                "quantity": {"type": "integer", "description": "How many to redeem at once, 1-99. Defaults to 1."},
+            },
             "required": ["award_id"],
         },
     },

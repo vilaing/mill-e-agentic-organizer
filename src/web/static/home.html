@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mill-E Agentic Organizer</title>
+  <meta name="description" content="An AI assistant that keeps college students on top of assignments, recruiting, their calendar, and their inbox." />
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/home.css" />
+</head>
+<body class="home">
+  <header class="home-nav">
+    <span class="home-brand">Mill-E Agentic Organizer</span>
+    <div class="home-nav-links">
+      <a href="https://github.com/vilaing/mill-e-agentic-organizer">GitHub</a>
+      <button type="button" class="theme-toggle" data-theme-toggle>Light mode</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h1>Coursework, job search, calendar, and inbox in one conversation.</h1>
+        <p class="hero-copy">Mill-E Agentic Organizer is an AI assistant for college students. Tell it what's going on, and it updates your assignments, tracks your applications, and rewards you for making progress.</p>
+        <div class="hero-actions">
+          <a class="button primary" id="open-app" href="/app">Try the demo</a>
+          <a class="button hidden" id="home-google" href="/api/auth/google/start">Sign in with Google</a>
+        </div>
+        <p class="hero-note" id="hero-note">The demo needs no account and uses sample data.</p>
+      </div>
+
+      <figure class="sample-chat" aria-label="Example conversation with the agent">
+        <p class="bubble user">I just started my literature review</p>
+        <p class="tool-call"><code>start_assignment</code><span>+12 pts</span></p>
+        <p class="bubble agent">Nice work getting started. You earned 12 points, and the draft is due in two days.</p>
+        <p class="bubble user">Any emails I need to respond to?</p>
+        <p class="tool-call"><code>list_recent_emails</code><span>3 unread</span></p>
+        <p class="bubble agent">Two need a reply: a recruiter asking about your interview, and your professor's offer of an extension.</p>
+      </figure>
+    </section>
+
+    <section class="home-section">
+      <h2>What it does</h2>
+      <div class="carousel" id="features" role="group" aria-roledescription="carousel" aria-label="What it does">
+        <div class="carousel-track" tabindex="0">
+          <article class="carousel-card" aria-roledescription="slide" aria-label="1 of 4">
+            <div>
+              <h3>Tracks assignments</h3>
+              <p>Add work in plain language, break it into milestones, and see what's due next.</p>
+            </div>
+            <div class="carousel-example">
+              <span class="carousel-label">Try saying</span>
+              <q>Add my bio lab report, due Friday. It's pretty hard.</q>
+              <code>add_assignment</code>
+            </div>
+          </article>
+          <article class="carousel-card" aria-roledescription="slide" aria-label="2 of 4">
+            <div>
+              <h3>Runs your job search</h3>
+              <p>Keep each application's stage, next step, and deadline in one pipeline.</p>
+            </div>
+            <div class="carousel-example">
+              <span class="carousel-label">Try saying</span>
+              <q>I got an interview with Northwind next Tuesday.</q>
+              <code>upsert_recruiting</code>
+            </div>
+          </article>
+          <article class="carousel-card" aria-roledescription="slide" aria-label="3 of 4">
+            <div>
+              <h3>Rewards progress</h3>
+              <p>Earn points for starting and finishing work, then spend them on breaks and treats.</p>
+            </div>
+            <div class="carousel-example">
+              <span class="carousel-label">Try saying</span>
+              <q>I finished problem set 6. What can I redeem?</q>
+              <code>complete_assignment</code>
+              <code>list_awards</code>
+            </div>
+          </article>
+          <article class="carousel-card" aria-roledescription="slide" aria-label="4 of 4">
+            <div>
+              <h3>Checks your day</h3>
+              <p>Ask about your calendar and inbox, schedule time, and prepare replies.</p>
+            </div>
+            <div class="carousel-example">
+              <span class="carousel-label">Try saying</span>
+              <q>What's on my calendar tomorrow? Block off two hours to study.</q>
+              <code>list_upcoming_events</code>
+              <code>create_event</code>
+            </div>
+          </article>
+        </div>
+        <div class="carousel-controls hidden">
+          <button type="button" class="carousel-arrow" data-direction="-1" aria-label="Previous card">&larr;</button>
+          <div class="carousel-dots"></div>
+          <button type="button" class="carousel-arrow" data-direction="1" aria-label="Next card">&rarr;</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <h2>How it's built</h2>
+      <div class="home-grid">
+        <article><h3>Agent loop</h3><p>Claude chooses from typed tools, Python runs them, and the results feed the next step until the request is done.</p></article>
+        <article><h3>Rules for points</h3><p>Assignment rewards are calculated in code, so the model can't award a different amount from one run to the next.</p></article>
+        <article><h3>Isolated visitors</h3><p>Each browser gets its own SQLite database, selected per request without changing any tool code.</p></article>
+        <article><h3>One tool set, two interfaces</h3><p>The same tool definitions power this app and an MCP server for other AI clients.</p></article>
+      </div>
+    </section>
+
+    <section class="home-section hidden" id="google-privacy">
+      <h2>If you sign in with Google</h2>
+      <ul class="privacy-list">
+        <li>You get a blank workspace connected to your real inbox and calendar.</li>
+        <li>The agent saves email as Gmail drafts for you to review. It can't send mail from this site.</li>
+        <li>Email senders, subjects, and previews, plus calendar events the agent reads, are sent to Anthropic's Claude API to answer you.</li>
+        <li>Your Google access is held in server memory only. Signing out cancels it and deletes the workspace.</li>
+        <li>Sign-in is open only to approved test accounts, and Google will warn you that this app is unverified.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="/static/home.js"></script>
+</body>
+</html>

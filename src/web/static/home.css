@@ -1,0 +1,351 @@
+.home {
+  line-height: 1.5;
+}
+
+.home main {
+  margin: 0 auto;
+  max-width: 1080px;
+  padding: 0 24px 64px;
+}
+
+.home-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 1080px;
+  padding: 20px 24px;
+}
+
+.home-brand { font-weight: 600; }
+
+.home-nav a { color: var(--muted); }
+
+.home-nav-links {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+}
+
+.hero {
+  align-items: center;
+  display: grid;
+  gap: 56px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  padding: 56px 0 72px;
+}
+
+.hero h1 {
+  font-size: clamp(32px, 5vw, 50px);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.hero-copy {
+  color: var(--muted);
+  font-size: 18px;
+  margin: 20px 0 28px;
+  max-width: 34em;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.button {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-weight: 600;
+  padding: 11px 18px;
+  text-decoration: none;
+}
+
+.button:hover { border-color: var(--accent); }
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.hero-note {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 16px 0 0;
+}
+
+.sample-chat {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 20px;
+}
+
+.bubble {
+  border-radius: var(--radius);
+  font-size: 15px;
+  margin: 0;
+  max-width: 88%;
+  padding: 9px 13px;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.bubble.agent {
+  align-self: flex-start;
+  border: 1px solid var(--panel-border);
+}
+
+.tool-call {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  margin: 0;
+}
+
+.tool-call code {
+  border-left: 2px solid var(--accent);
+  overflow-wrap: anywhere;
+  padding-left: 8px;
+}
+
+.home-section { padding: 28px 0; }
+
+.home-section h2 {
+  font-size: 22px;
+  margin: 0 0 18px;
+}
+
+.home-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.home-grid article {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.home-grid h3 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+
+.home-grid p {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* "What it does" carousel: native scroll snapping, so swiping works by itself. */
+.carousel {
+  --card-width: min(760px, calc(100vw - 64px));
+}
+
+.carousel-track {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding-inline: calc((100% - var(--card-width)) / 2);
+  position: relative;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.carousel-track::-webkit-scrollbar { display: none; }
+
+.carousel-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  display: grid;
+  flex: 0 0 var(--card-width);
+  gap: 32px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 280px;
+  padding: 36px;
+  scroll-snap-align: center;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.carousel.is-ready .carousel-card:not(.is-active) {
+  cursor: pointer;
+  opacity: 0.45;
+  transform: scale(0.96);
+}
+
+.carousel-card h3 {
+  font-size: 30px;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin: 0 0 14px;
+}
+
+.carousel-card p {
+  color: var(--muted);
+  font-size: 17px;
+  margin: 0;
+}
+
+.carousel-example {
+  align-items: flex-start;
+  align-self: center;
+  border-left: 2px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 20px;
+}
+
+.carousel-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.carousel-example q {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.carousel-example code {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.carousel-controls {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.carousel-controls button { padding: 0; }
+
+.carousel-controls .carousel-arrow {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 17px;
+  height: 40px;
+  width: 40px;
+}
+
+.carousel-controls .carousel-arrow:hover {
+  background: transparent;
+  border-color: var(--accent);
+}
+
+.carousel-dots { display: flex; }
+
+.carousel-controls .carousel-dot,
+.carousel-controls .carousel-dot:hover {
+  align-items: center;
+  background: transparent;
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  width: 26px;
+}
+
+.carousel-dot::before {
+  background: var(--panel-border);
+  border-radius: 999px;
+  content: "";
+  height: 8px;
+  transition: background 0.2s ease, width 0.2s ease;
+  width: 8px;
+}
+
+.carousel-dot:hover::before { background: var(--muted); }
+
+.carousel-dot[aria-current="true"]::before {
+  background: var(--accent);
+  width: 20px;
+}
+
+@media (max-width: 680px) {
+  .carousel-card {
+    gap: 22px;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 24px;
+  }
+
+  .carousel-card h3 { font-size: 25px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .carousel-card,
+  .carousel-dot::before { transition: none; }
+}
+
+.privacy-list {
+  color: var(--muted);
+  margin: 0;
+  max-width: 44em;
+  padding-left: 20px;
+}
+
+.privacy-list li { margin-bottom: 8px; }
+
+.intro-item,
+.reveal {
+  transition: opacity 0.45s ease, transform 0.45s ease, border-color 0.15s ease;
+}
+
+.intro-item.is-waiting {
+  opacity: 0;
+  transform: translateY(6px);
+  visibility: hidden;
+}
+
+.reveal.is-waiting {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+@media (max-width: 860px) {
+  .hero {
+    gap: 36px;
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 28px;
+  }
+
+  .home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .home main,
+  .home-nav {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+}

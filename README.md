@@ -1,4 +1,4 @@
-# Student Agent
+# Mill-E Agentic Organizer
 
 A personal agent that reads your Gmail and Google Calendar, tracks assignments
 and recruiting progress in a local database, and runs on a schedule to send
@@ -91,6 +91,47 @@ it, add to its config:
 }
 ```
 
+## Public demo
+
+Setting `DEMO_MODE=true` makes the web app safe to share by link, with no signup:
+
+- **Per-visitor isolation.** Each visitor gets a disposable SQLite sandbox of
+  sample data, tied to a cookie. A context variable routes `get_conn()` to that
+  file, so the tool functions needed no changes.
+- **Simulated Google tools.** Gmail and Calendar are swapped for fakes with the
+  same names and schemas, so the agent loop is unchanged for visitors who don't
+  sign in. The real functions aren't in their dispatch table.
+- **Optional Google sign-in.** Signing in replaces the sample data with a blank
+  workspace and connects the visitor's real inbox and calendar. Tokens stay in
+  memory, and `send_email` maps to a draft-only tool, so text in an incoming
+  email can't make the agent send mail.
+- **Cost controls.** Chat is capped per visitor and globally per day. Set a
+  monthly spend limit in the Anthropic Console as a hard backstop, since the
+  in-memory counters reset when the server restarts.
+
+To deploy on [Fly.io](https://fly.io) (set your own app name in `fly.toml` first):
+
+```bash
+fly launch --copy-config --no-deploy
+fly secrets set ANTHROPIC_API_KEY=sk-ant-...
+fly deploy --ha=false
+```
+
+Use a separate API key for the demo so you can revoke it independently. The
+image runs one process on one machine because chat history and caps live in
+memory. Don't expose the app publicly with `DEMO_MODE=false`: that mode has no
+login and is connected to your real Gmail.
+
+To turn on Google sign-in, create an OAuth client of type **Web application**
+in Google Cloud with this authorized redirect URI:
+`https://your-app.fly.dev/api/auth/google/callback`. Add each person who should
+be able to sign in as a test user on the OAuth consent screen, then run:
+
+```bash
+fly secrets set GOOGLE_OAUTH_CLIENT_ID=... GOOGLE_OAUTH_CLIENT_SECRET=... \
+  GOOGLE_OAUTH_REDIRECT_URI=https://your-app.fly.dev/api/auth/google/callback
+```
+
 ## Project structure
 
 ```
@@ -100,6 +141,8 @@ student-agent/
     config.py            # env var loading
     scheduler.py          # daily automated run
     mcp_server.py          # MCP wrapper -- same tools, over the MCP protocol
+    demo.py                # public demo: per-visitor sandboxes, simulated Google tools, caps
+    google_oauth.py        # hosted Google sign-in (authorization code + PKCE)
     tools/
       calendar_tool.py    # Google Calendar read/write
       gmail_tool.py        # Gmail read/send

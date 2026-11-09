@@ -5,8 +5,12 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+  // A server crash returns plain text, not JSON.
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data === null) {
+    const detail = typeof data?.detail === "string" ? data.detail : "";
+    throw new Error(detail || "Something went wrong on the server. Please try again.");
+  }
   return data;
 }
 
@@ -23,6 +27,65 @@ document.getElementById("tabs").addEventListener("click", (e) => {
   if (tab === "recruiting") loadRecruiting();
   if (tab === "settings") loadSettings();
 });
+
+// --- Side menu: collapses to icons on desktop, slides in as a drawer on phones ---
+
+const SIDEBAR_COLLAPSED_KEY = "mill-e-sidebar-collapsed";
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const phoneLayout = matchMedia("(max-width: 760px)");
+const bodyClasses = document.body.classList;
+
+function renderSidebar() {
+  const phone = phoneLayout.matches;
+  const collapsed = bodyClasses.contains("sidebar-collapsed");
+  const open = phone ? bodyClasses.contains("sidebar-open") : !collapsed;
+  sidebarToggle.setAttribute("aria-expanded", String(open));
+  sidebarToggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.title = !phone && collapsed ? btn.getAttribute("aria-label") : "";
+  });
+}
+
+function closeDrawer() {
+  bodyClasses.remove("sidebar-open");
+  renderSidebar();
+}
+
+sidebarToggle.addEventListener("click", () => {
+  if (phoneLayout.matches) {
+    bodyClasses.toggle("sidebar-open");
+    if (bodyClasses.contains("sidebar-open")) document.querySelector(".tab-btn.active").focus();
+  } else {
+    const collapsed = bodyClasses.toggle("sidebar-collapsed");
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch {
+      // The menu still collapses; it just won't be remembered next visit.
+    }
+  }
+  renderSidebar();
+});
+
+document.getElementById("sidebar-scrim").addEventListener("click", closeDrawer);
+
+document.getElementById("tabs").addEventListener("click", (e) => {
+  if (phoneLayout.matches && e.target.closest(".tab-btn")) closeDrawer();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !bodyClasses.contains("sidebar-open")) return;
+  closeDrawer();
+  sidebarToggle.focus();
+});
+
+phoneLayout.addEventListener("change", closeDrawer);
+
+try {
+  bodyClasses.toggle("sidebar-collapsed", localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
+} catch {
+  // Storage can be blocked, e.g. in a private window; start expanded.
+}
+renderSidebar();
 
 // --- Points badge ---
 
@@ -69,12 +132,67 @@ function formatChatText(raw) {
   return html;
 }
 
+const CHAT_MS_PER_CHAR = 6;
+const CHAT_MAX_TYPE_MS = 1500;
+
+// Types out already-formatted HTML by revealing its text nodes, so tags never
+// show mid-word. Untyped text stays in place, invisible, so the bubble keeps
+// its final size. The clean HTML is restored at the end.
+function typeChatHtml(el, html) {
+  el.innerHTML = html;
+  chatLog.scrollTop = chatLog.scrollHeight;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  const segments = textNodes.map((node) => {
+    const typed = document.createTextNode("");
+    const rest = document.createElement("span");
+    rest.className = "type-rest";
+    rest.textContent = node.nodeValue;
+    const text = node.nodeValue;
+    node.replaceWith(typed, rest);
+    return { text, typed, rest };
+  });
+
+  const total = segments.reduce((sum, segment) => sum + segment.text.length, 0);
+  if (total === 0) return;
+  const duration = Math.min(total * CHAT_MS_PER_CHAR, CHAT_MAX_TYPE_MS);
+  const caret = document.createElement("span");
+  caret.className = "type-caret is-active";
+  const start = performance.now();
+  let segmentIndex = 0;
+  let charsInFinishedSegments = 0;
+
+  function drawFrame(now) {
+    const shown = Math.min(total, Math.ceil((Math.max(0, now - start) / duration) * total));
+    while (segmentIndex < segments.length) {
+      const { text, typed, rest } = segments[segmentIndex];
+      const shownHere = Math.min(shown - charsInFinishedSegments, text.length);
+      typed.nodeValue = text.slice(0, shownHere);
+      rest.textContent = text.slice(shownHere);
+      rest.before(caret);
+      if (shownHere < text.length) break;
+      charsInFinishedSegments += text.length;
+      segmentIndex++;
+    }
+    if (shown < total) requestAnimationFrame(drawFrame);
+    else el.innerHTML = html;
+  }
+  requestAnimationFrame(drawFrame);
+}
+
 function appendChatMsg(text, role) {
   const div = document.createElement("div");
   div.className = `chat-msg ${role}`;
-  div.innerHTML = formatChatText(text);
   chatLog.appendChild(div);
-  chatLog.scrollTop = chatLog.scrollHeight;
+  if (role === "agent") {
+    typeChatHtml(div, formatChatText(text));
+  } else {
+    div.innerHTML = formatChatText(text);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
   return div;
 }
 
@@ -97,12 +215,71 @@ chatForm.addEventListener("submit", async (e) => {
   try {
     const { reply } = await api("/chat", { method: "POST", body: JSON.stringify({ message }) });
     pendingEl.classList.remove("typing");
-    pendingEl.innerHTML = formatChatText(reply);
+    typeChatHtml(pendingEl, formatChatText(reply));
   } catch (err) {
     pendingEl.classList.remove("typing");
     pendingEl.textContent = `Error: ${err.message}`;
   }
   refreshPoints();
+  refreshDemoBanner();
+});
+
+// --- Public demo banner and starter prompts (hidden outside demo mode) ---
+
+async function refreshDemoBanner() {
+  const status = await api("/demo");
+  if (!status.demo) return status;
+  document.getElementById("demo-banner").classList.remove("hidden");
+  const { available, email } = status.google;
+  const left = status.messages_left;
+  document.getElementById("demo-messages-left").textContent = email
+    ? ""
+    : `${left} chat ${left === 1 ? "message" : "messages"} left today.`;
+
+  document.getElementById("google-connect").classList.toggle("hidden", !available || Boolean(email));
+  document.getElementById("google-sign-out").classList.toggle("hidden", !email);
+  const emailEl = document.getElementById("google-email");
+  emailEl.classList.toggle("hidden", !email);
+  emailEl.textContent = email || "";
+  document.getElementById("demo-reset").classList.toggle("hidden", Boolean(email));
+  if (email) {
+    document.getElementById("demo-banner-text").textContent =
+      "Your real inbox and calendar are connected. Emails are saved as Gmail drafts, never sent. This workspace is temporary and ends when you sign out.";
+  }
+  return status;
+}
+
+document.getElementById("google-sign-out").addEventListener("click", async () => {
+  await api("/auth/google/sign-out", { method: "POST" });
+  location.reload();
+});
+
+const GOOGLE_SIGN_IN_MESSAGES = {
+  cancelled: "Google sign-in was cancelled, so you're still using the sample data.",
+  permissions: "Google sign-in needs all of the requested permissions. You're still using the sample data.",
+  failed: "Google sign-in didn't complete. Please try again.",
+};
+
+function showGoogleSignInResult() {
+  const params = new URLSearchParams(location.search);
+  const message = GOOGLE_SIGN_IN_MESSAGES[params.get("google")];
+  if (message) appendChatMsg(message, "agent");
+  if (params.has("google")) history.replaceState(null, "", "/app");
+}
+
+document.getElementById("demo-reset").addEventListener("click", async () => {
+  await api("/demo/reset", { method: "POST" });
+  location.reload();
+});
+
+const demoPrompts = document.getElementById("demo-prompts");
+
+demoPrompts.addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  demoPrompts.classList.add("hidden");
+  chatInput.value = btn.textContent;
+  chatForm.requestSubmit();
 });
 
 // --- Welcome message: quick overview of upcoming tasks, shown once on load ---
@@ -141,10 +318,19 @@ const genericModalForm = document.getElementById("generic-modal-form");
 function openGenericModal(title, fields, onSubmit) {
   genericModalTitle.textContent = title;
   genericModalForm.innerHTML = "";
+  const customReaders = {};
   fields.forEach((f) => {
     const label = document.createElement("label");
     label.textContent = f.label;
     genericModalForm.appendChild(label);
+
+    const buildCustomField = CUSTOM_FIELDS[f.type];
+    if (buildCustomField) {
+      const { root, getValue } = buildCustomField(f);
+      genericModalForm.appendChild(root);
+      customReaders[f.name] = getValue;
+      return;
+    }
 
     let input;
     if (f.type === "select") {
@@ -164,9 +350,16 @@ function openGenericModal(title, fields, onSubmit) {
     }
     input.id = `gm-${f.name}`;
     if (f.placeholder) input.placeholder = f.placeholder;
+    if (f.required) input.required = true;
     if (f.value !== undefined) input.value = f.value;
     genericModalForm.appendChild(input);
+    if (f.type === "select") enhanceSelect(input);
   });
+
+  const errorEl = document.createElement("p");
+  errorEl.className = "modal-error hidden";
+  errorEl.setAttribute("role", "alert");
+  genericModalForm.appendChild(errorEl);
 
   const actions = document.createElement("div");
   actions.className = "modal-actions";
@@ -184,13 +377,26 @@ function openGenericModal(title, fields, onSubmit) {
 
   genericModalForm.onsubmit = async (e) => {
     e.preventDefault();
-    const values = {};
-    fields.forEach((f) => {
-      const el = document.getElementById(`gm-${f.name}`);
-      values[f.name] = f.type === "number" ? Number(el.value) : el.value;
-    });
-    await onSubmit(values);
-    closeGenericModal();
+    errorEl.classList.add("hidden");
+    submitBtn.disabled = true;
+    try {
+      const values = {};
+      fields.forEach((f) => {
+        if (customReaders[f.name]) {
+          values[f.name] = customReaders[f.name]();
+          return;
+        }
+        const el = document.getElementById(`gm-${f.name}`);
+        values[f.name] = f.type === "number" ? Number(el.value) : el.value;
+      });
+      await onSubmit(values);
+      closeGenericModal();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove("hidden");
+    } finally {
+      submitBtn.disabled = false;
+    }
   };
 
   genericModal.classList.remove("hidden");
@@ -290,28 +496,106 @@ function showAssignmentListView() {
   loadAssignments();
 }
 
+let currentDetailStatus = null;
+
+// Undo stays available so a milestone that's already done can always be reversed.
+function updateMilestoneLocks() {
+  const locked = currentDetailStatus === "open";
+  document.querySelectorAll("#detail-milestones-list .milestone-done-btn").forEach((button) => {
+    const blocked = locked && !button.classList.contains("is-undo");
+    button.disabled = blocked;
+    button.title = blocked ? "Start this assignment first" : "";
+  });
+  const hasMilestones = document.querySelector("#detail-milestones-list .milestone-row") !== null;
+  document.getElementById("detail-milestone-lock").classList.toggle("hidden", !locked || !hasMilestones);
+}
+
+function updateMilestoneCount(milestones) {
+  const done = milestones.filter((m) => m.done).length;
+  document.getElementById("detail-milestone-count").textContent =
+    milestones.length ? `${done} of ${milestones.length} done` : "";
+}
+
+function applyMilestoneState(row, milestone, justToggled) {
+  row.classList.toggle("is-done", Boolean(milestone.done));
+  const button = row.querySelector(".milestone-done-btn");
+  button.textContent = milestone.done ? "Undo" : "Done";
+  button.classList.toggle("is-undo", Boolean(milestone.done));
+  button.setAttribute("aria-label", `${milestone.done ? "Undo" : "Mark done:"} ${milestone.title}`);
+
+  const points = row.querySelector(".milestone-points");
+  if (milestone.points_awarded > 0) {
+    points.textContent = `+${milestone.points_awarded} pts`;
+  } else {
+    points.textContent = milestone.point_percent ? `${milestone.point_percent}%` : "";
+  }
+  points.classList.toggle("is-earned", justToggled && Boolean(milestone.done));
+  updateMilestoneLocks();
+}
+
+function createDetailMeter(label, value) {
+  const stat = document.createElement("div");
+  stat.className = "detail-stat";
+  stat.setAttribute("role", "img");
+  stat.setAttribute("aria-label", `${label}: ${value} of 5`);
+  const name = document.createElement("span");
+  name.textContent = label;
+  const pips = document.createElement("span");
+  pips.className = "detail-pips";
+  for (let i = 1; i <= 5; i++) {
+    const pip = document.createElement("span");
+    if (i <= value) pip.className = "is-filled";
+    pips.append(pip);
+  }
+  stat.append(name, pips);
+  return stat;
+}
+
+const ASSIGNMENT_STATUS_LABELS = { open: "Not started", in_progress: "In progress", done: "Done" };
+
 async function renderDetailMilestones() {
   const list = await api(`/assignments/${currentDetailAssignmentId}/milestones`);
   const container = document.getElementById("detail-milestones-list");
+  const errorEl = document.getElementById("detail-milestone-error");
   container.innerHTML = "";
+  updateMilestoneCount(list);
   if (list.length === 0) {
     container.innerHTML = `<div class="empty-state">No milestones yet.</div>`;
+    updateMilestoneLocks();
     return;
   }
   list.forEach((m) => {
     const row = document.createElement("div");
     row.className = "milestone-row";
     row.innerHTML = `
-      <input type="checkbox" ${m.done ? "checked" : ""} />
-      <span class="milestone-title ${m.done ? "done" : ""}">${escapeHtml(m.title)}</span>
-      <span class="milestone-points">${m.points_awarded > 0 ? `+${m.points_awarded} pts` : ""}</span>
+      <span class="milestone-title"><span class="milestone-text">${escapeHtml(m.title)}</span></span>
+      <span class="milestone-points"></span>
+      <button type="button" class="milestone-done-btn"></button>
       <button type="button" class="milestone-delete" title="Delete">&times;</button>
     `;
-    row.querySelector("input").addEventListener("change", async () => {
-      await api(`/milestones/${m.id}/toggle`, { method: "POST" });
-      renderDetailMilestones();
-      renderAssignmentDetailHeader();
-      refreshPoints();
+    row.querySelector(".milestone-delete").setAttribute("aria-label", `Delete ${m.title}`);
+    applyMilestoneState(row, m, false);
+
+    // The row is updated in place, not re-rendered, so its strikethrough can animate.
+    let toggling = false;
+    row.querySelector(".milestone-done-btn").addEventListener("click", async () => {
+      if (toggling) return;
+      toggling = true;
+      errorEl.classList.add("hidden");
+      try {
+        const result = await api(`/milestones/${m.id}/toggle`, { method: "POST" });
+        m.done = result.done;
+        m.points_awarded = result.points_awarded;
+        applyMilestoneState(row, m, true);
+        updateMilestoneCount(list);
+        renderAssignmentDetailHeader();
+        refreshPoints();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+      } finally {
+        toggling = false;
+      }
     });
     row.querySelector(".milestone-delete").addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -320,22 +604,41 @@ async function renderDetailMilestones() {
     });
     container.appendChild(row);
   });
+  updateMilestoneLocks();
 }
 
 async function renderAssignmentDetailHeader() {
   const a = await api(`/assignments/${currentDetailAssignmentId}`);
+  currentDetailStatus = a.status;
+  updateMilestoneLocks();
   const points = a.importance * a.difficulty * 2;
   const earned = a.points_earned || 0;
 
   document.getElementById("detail-title").textContent = a.title;
   document.getElementById("detail-sub").textContent = [a.course, a.due_date ? `due ${a.due_date}` : ""]
     .filter(Boolean).join(" · ");
-  document.getElementById("detail-meta").textContent =
-    `status: ${a.status} · importance: ${a.importance} · difficulty: ${a.difficulty}`;
+  const status = document.createElement("span");
+  status.className = `badge detail-status is-${a.status}`;
+  status.textContent = ASSIGNMENT_STATUS_LABELS[a.status] || a.status;
+  document.getElementById("detail-meta").replaceChildren(
+    status,
+    createDetailMeter("Importance", a.importance),
+    createDetailMeter("Difficulty", a.difficulty),
+  );
 
   const badge = document.getElementById("detail-points-badge");
   badge.textContent = `${earned}/${points} pts`;
   stylePointsBadge(badge, points);
+
+  const progress = document.getElementById("detail-progress");
+  progress.setAttribute("aria-valuemax", String(points));
+  progress.setAttribute("aria-valuenow", String(Math.min(earned, points)));
+  document.getElementById("detail-progress-fill").style.width = `${Math.min(100, (earned / points) * 100)}%`;
+
+  const { point_rules_summary: ruleSummary } = await api("/preferences");
+  const ruleNote = document.getElementById("detail-point-rule");
+  ruleNote.textContent = ruleSummary;
+  ruleNote.classList.toggle("hidden", !ruleSummary);
 
   const actions = document.getElementById("detail-actions");
   actions.innerHTML = "";
@@ -367,13 +670,25 @@ document.getElementById("assignment-detail-back").addEventListener("click", show
 document.getElementById("detail-add-milestone-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = document.getElementById("detail-new-milestone-title");
+  const percentInput = document.getElementById("detail-new-milestone-percent");
+  const errorEl = document.getElementById("detail-milestone-error");
   const title = input.value.trim();
   if (!title) return;
-  await api(`/assignments/${currentDetailAssignmentId}/milestones`, {
-    method: "POST",
-    body: JSON.stringify({ title }),
-  });
+  const point_percent = parseMilestonePercent(percentInput.value);
+  try {
+    if (point_percent === undefined) throw new Error("Enter a whole percent from 1 to 100, or leave it blank for Auto.");
+    await api(`/assignments/${currentDetailAssignmentId}/milestones`, {
+      method: "POST",
+      body: JSON.stringify({ title, point_percent }),
+    });
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove("hidden");
+    return;
+  }
+  errorEl.classList.add("hidden");
   input.value = "";
+  percentInput.value = "";
   renderDetailMilestones();
 });
 
@@ -385,19 +700,14 @@ document.getElementById("detail-delete-assignment").addEventListener("click", as
 
 document.getElementById("add-assignment-btn").addEventListener("click", () => {
   openGenericModal("Add assignment", [
-    { name: "title", label: "Title", placeholder: "Problem set 4" },
+    { name: "title", label: "Title", placeholder: "Problem set 4", required: true },
     { name: "course", label: "Course", placeholder: "CS 101" },
-    { name: "due_date", label: "Due date", placeholder: "2026-08-01" },
-    { name: "importance", label: "Importance (1-5)", type: "number", value: 3 },
-    { name: "difficulty", label: "Difficulty (1-5)", type: "number", value: 3 },
-    { name: "milestones", label: "Milestones (one per line, optional)", type: "textarea", placeholder: "HTML page\nStylesheet\nJS wiring" },
+    { name: "due_date", label: "Due date", type: "date" },
+    { name: "importance", label: "Importance", type: "scale", lowLabel: "Low", highLabel: "High" },
+    { name: "difficulty", label: "Difficulty", type: "scale", lowLabel: "Easy", highLabel: "Hard" },
+    { name: "milestones", label: "Milestones (optional)", type: "milestones" },
   ], async (values) => {
-    const { milestones, ...assignmentValues } = values;
-    const created = await api("/assignments", { method: "POST", body: JSON.stringify(assignmentValues) });
-    const titles = milestones.split("\n").map((t) => t.trim()).filter(Boolean);
-    for (const title of titles) {
-      await api(`/assignments/${created.id}/milestones`, { method: "POST", body: JSON.stringify({ title }) });
-    }
+    await api("/assignments", { method: "POST", body: JSON.stringify(values) });
     loadAssignments();
   });
 });
@@ -423,24 +733,43 @@ async function loadAwards() {
         </div>
         <span class="badge pts-badge">${award.cost} pts</span>
       </div>
-      <div class="card-actions"></div>
+      <div class="card-actions award-actions"></div>
+      <p class="modal-error award-error hidden" role="alert"></p>
     `;
     stylePointsBadge(card.querySelector(".pts-badge"), award.cost);
     const actions = card.querySelector(".card-actions");
+    const errorEl = card.querySelector(".award-error");
     const redeemBtn = document.createElement("button");
-    redeemBtn.textContent = "Redeem";
+    const stepper = createQuantityStepper({
+      label: `Quantity of ${award.name}`,
+      max: 99,
+      onChange: (quantity) => {
+        redeemBtn.textContent = `Redeem for ${award.cost * quantity} pts`;
+        errorEl.classList.add("hidden");
+      },
+    });
+    let redeeming = false;
     redeemBtn.onclick = async () => {
+      if (redeeming) return;
+      redeeming = true;
       try {
-        const result = await api(`/awards/${award.id}/redeem`, { method: "POST" });
+        const result = await api(`/awards/${award.id}/redeem`, {
+          method: "POST",
+          body: JSON.stringify({ quantity: stepper.getValue() }),
+        });
+        stepper.reset();
         showRedeemModal(result);
         refreshPoints();
         loadRewardBanks();
         loadDollarTransactions();
       } catch (err) {
-        alert(err.message);
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+      } finally {
+        redeeming = false;
       }
     };
-    actions.appendChild(redeemBtn);
+    actions.append(stepper.root, redeemBtn);
     if (!award.is_preset) {
       const deactivateBtn = document.createElement("button");
       deactivateBtn.className = "secondary";
@@ -470,20 +799,43 @@ document.getElementById("add-award-btn").addEventListener("click", () => {
 const redeemModal = document.getElementById("redeem-modal");
 const redeemModalBody = document.getElementById("redeem-modal-body");
 
+const redeemModalTitle = document.getElementById("redeem-modal-title");
+const redeemModalClose = document.getElementById("redeem-modal-close");
+const REDEEM_LEAVE_MS = 180; // matches the .is-leaving animation in style.css
+let redeemReturnFocus = null;
+
 function showRedeemModal(result) {
-  const parts = [`Redeemed **${result.redeemed}** for ${result.points_spent} pts.`, `New total: ${result.remaining_points} pts.`];
+  const name = result.quantity > 1 ? `${result.quantity} x ${result.redeemed}` : result.redeemed;
+  const parts = [`Redeemed **${name}** for ${result.points_spent} pts.`, `New total: ${result.remaining_points} pts.`];
   if (result.break_minutes_added > 0) {
     parts.push(`+${result.break_minutes_added} min added to your break bank (now ${result.break_bank_total} min).`);
   }
   if (result.dollar_value_added > 0) {
     parts.push(`+$${result.dollar_value_added.toFixed(2)} added to your $$ bank (now $${result.dollar_bank_total.toFixed(2)}).`);
   }
-  redeemModalBody.innerHTML = formatChatText(parts.join(" "));
-  redeemModal.classList.remove("hidden");
+  showSuccessPopup("Reward redeemed!", parts.join(" "));
 }
 
-document.getElementById("redeem-modal-close").addEventListener("click", () => {
-  redeemModal.classList.add("hidden");
+// The animated confirmation pop-up, shared by rewards and settings.
+function showSuccessPopup(title, message) {
+  redeemModalTitle.textContent = title;
+  redeemModalBody.innerHTML = formatChatText(message);
+  redeemReturnFocus = document.activeElement;
+  redeemModal.classList.remove("hidden", "is-leaving");
+  redeemModal.classList.add("is-entering");
+  redeemModalClose.focus({ preventScroll: true });
+}
+
+redeemModalClose.addEventListener("click", () => {
+  if (redeemModal.classList.contains("is-leaving")) return;
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  redeemModal.classList.remove("is-entering");
+  redeemModal.classList.add("is-leaving");
+  setTimeout(() => {
+    redeemModal.classList.add("hidden");
+    redeemModal.classList.remove("is-leaving");
+    redeemReturnFocus?.focus({ preventScroll: true });
+  }, reduceMotion ? 0 : REDEEM_LEAVE_MS);
 });
 
 // --- Reward banks (break time / $$ accumulated from redeeming awards) ---
@@ -623,16 +975,22 @@ document.getElementById("dollar-spend-form").addEventListener("submit", async (e
   e.preventDefault();
   const amountInput = document.getElementById("dollar-spend-amount");
   const reasonInput = document.getElementById("dollar-spend-reason");
-  const amount = Number(amountInput.value);
-  if (!amount || amount <= 0) return;
+  const errorEl = document.getElementById("dollar-spend-error");
+  errorEl.classList.add("hidden");
+  const typed = amountInput.value.trim().replace(/^\$/, "").replaceAll(",", "");
+  const amount = Number(typed);
   try {
+    if (!/^(\d+(\.\d{0,2})?|\.\d{1,2})$/.test(typed) || amount <= 0) {
+      throw new Error("Enter an amount like 4.50.");
+    }
     await api("/reward-banks/spend-dollars", { method: "POST", body: JSON.stringify({ amount, reason: reasonInput.value }) });
     amountInput.value = "";
     reasonInput.value = "";
     loadRewardBanks();
     loadDollarTransactions();
   } catch (err) {
-    alert(err.message);
+    errorEl.textContent = err.message;
+    errorEl.classList.remove("hidden");
   }
 });
 
@@ -714,7 +1072,7 @@ document.getElementById("add-recruiting-btn").addEventListener("click", () => {
       { value: "rejected", label: "Rejected" },
     ] },
     { name: "next_action", label: "Next action", placeholder: "Follow up" },
-    { name: "next_action_date", label: "Next action date", placeholder: "2026-08-01" },
+    { name: "next_action_date", label: "Next action date", type: "date" },
     { name: "notes", label: "Notes", type: "textarea" },
   ], async (values) => {
     await api("/recruiting", { method: "POST", body: JSON.stringify(values) });
@@ -727,8 +1085,24 @@ document.getElementById("add-recruiting-btn").addEventListener("click", () => {
 async function loadSettings() {
   const prefs = await api("/preferences");
   document.getElementById("settings-reward-style").value = prefs.reward_style;
+  syncDropdown(document.getElementById("settings-reward-style"));
   document.getElementById("settings-additional-rules").value = prefs.additional_rules;
   document.getElementById("settings-morning-reminders").checked = prefs.morning_reminders;
+  showRuleEffect(prefs.point_rules_summary);
+}
+
+function showRuleEffect(summary) {
+  const el = document.getElementById("settings-rule-effect");
+  el.textContent = summary ? `Applied to points: ${summary}` : "";
+  el.classList.toggle("hidden", !summary);
+}
+
+function savedPreferencesMessage({ additional_rules, point_rules_summary }) {
+  if (point_rules_summary) return `Your rules now apply to points. ${point_rules_summary}`;
+  if (additional_rules.trim()) {
+    return "The assistant will follow your rules in chat. They don't change how points are earned.";
+  }
+  return "Your reward style, additional rules, and reminder setting are up to date.";
 }
 
 document.getElementById("settings-form").addEventListener("submit", async (e) => {
@@ -736,10 +1110,27 @@ document.getElementById("settings-form").addEventListener("submit", async (e) =>
   const reward_style = document.getElementById("settings-reward-style").value;
   const additional_rules = document.getElementById("settings-additional-rules").value;
   const morning_reminders = document.getElementById("settings-morning-reminders").checked;
-  await api("/preferences/reward-style", { method: "POST", body: JSON.stringify({ reward_style }) });
-  await api("/preferences/additional-rules", { method: "POST", body: JSON.stringify({ additional_rules }) });
-  await api("/preferences/morning-reminders", { method: "POST", body: JSON.stringify({ enabled: morning_reminders }) });
-  alert("Preferences saved.");
+  const errorEl = document.getElementById("settings-error");
+  const saveBtn = e.target.querySelector('button[type="submit"]');
+  errorEl.classList.add("hidden");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving...";
+  try {
+    // Rules go first: they're the only step that can fail for outside reasons.
+    const saved = await api("/preferences/additional-rules", { method: "POST", body: JSON.stringify({ additional_rules }) });
+    await api("/preferences/reward-style", { method: "POST", body: JSON.stringify({ reward_style }) });
+    await api("/preferences/morning-reminders", { method: "POST", body: JSON.stringify({ enabled: morning_reminders }) });
+    showRuleEffect(saved.point_rules_summary);
+    saveBtn.disabled = false;
+    saveBtn.focus({ preventScroll: true }); // disabling it dropped keyboard focus
+    showSuccessPopup("Preferences saved!", savedPreferencesMessage(saved));
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove("hidden");
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save preferences";
+  }
 });
 
 // --- First-time setup modal ---
@@ -774,6 +1165,9 @@ async function init() {
     showWelcomeMessage();
   }
   refreshPoints();
+  const demoStatus = await refreshDemoBanner();
+  if (demoStatus.demo && !demoStatus.google.email) demoPrompts.classList.remove("hidden");
+  showGoogleSignInResult();
 }
 
 init();

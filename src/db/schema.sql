@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS milestones (
     title TEXT NOT NULL,
     done INTEGER DEFAULT 0,
     points_awarded INTEGER DEFAULT 0,
+    point_percent INTEGER,  -- optional custom share of the assignment's total points (1-100); NULL = default even split
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (assignment_id) REFERENCES assignments(id)
 );
@@ -51,6 +52,10 @@ CREATE TABLE IF NOT EXISTS preferences (
     additional_rules TEXT DEFAULT '',     -- freeform custom instructions from the user
     morning_reminders INTEGER DEFAULT 1,  -- 1 = opted in, 0 = opted out
     onboarding_completed INTEGER DEFAULT 0,
+    points_on_start INTEGER DEFAULT 1,       -- which moments earn points, set by interpreting additional_rules
+    points_on_milestones INTEGER DEFAULT 1,
+    points_on_completion INTEGER DEFAULT 1,
+    point_rules_summary TEXT DEFAULT '',     -- plain-language description of those settings
     updated_at TEXT DEFAULT (datetime('now'))
 );
 INSERT OR IGNORE INTO preferences (id, reward_style) VALUES (1, 'balanced');

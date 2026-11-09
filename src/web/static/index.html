@@ -3,27 +3,69 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Student Agent</title>
+  <title>Mill-E Agentic Organizer</title>
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body>
+<body class="app-page">
   <header class="topbar">
-    <h1>Student Agent</h1>
-    <div class="points-badge" id="points-badge">-- pts</div>
+    <div class="topbar-start">
+      <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Close menu">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <h1><a class="home-link" href="/">Mill-E Agentic Organizer</a></h1>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" class="theme-toggle" data-theme-toggle>Light mode</button>
+      <a class="google-action hidden" id="google-connect" href="/api/auth/google/start">Sign in with Google</a>
+      <span class="google-email hidden" id="google-email"></span>
+      <button type="button" class="google-action hidden" id="google-sign-out">Sign out</button>
+      <div class="points-badge" id="points-badge">-- pts</div>
+    </div>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab-btn active" data-tab="chat">Chat</button>
-    <button class="tab-btn" data-tab="assignments">Assignments</button>
-    <button class="tab-btn" data-tab="rewards">Points &amp; Rewards</button>
-    <button class="tab-btn" data-tab="recruiting">Recruiting</button>
-    <button class="tab-btn" data-tab="settings">Settings</button>
-  </nav>
+  <div class="demo-banner hidden" id="demo-banner">
+    <span><span id="demo-banner-text">Demo with sample data. Email and calendar are simulated, and your changes are private to you.</span> <span id="demo-messages-left"></span></span>
+    <button type="button" class="demo-reset" id="demo-reset">Reset demo</button>
+  </div>
+
+  <div class="app-body">
+  <aside class="sidebar" id="sidebar">
+    <nav class="side-nav" id="tabs" aria-label="Main">
+      <button type="button" class="tab-btn active" data-tab="chat" aria-label="Chat">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="tab-label">Chat</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="assignments" aria-label="Assignments">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span class="tab-label">Assignments</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="rewards" aria-label="Points and Rewards">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
+        <span class="tab-label">Points &amp; Rewards</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="recruiting" aria-label="Recruiting">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+        <span class="tab-label">Recruiting</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="settings" aria-label="Settings">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+        <span class="tab-label">Settings</span>
+      </button>
+    </nav>
+  </aside>
+  <div class="sidebar-scrim" id="sidebar-scrim"></div>
 
   <main>
     <!-- Chat -->
     <section id="tab-chat" class="tab-panel active">
       <div class="chat-log" id="chat-log"></div>
+      <div class="demo-prompts hidden" id="demo-prompts">
+        <button type="button">What should I work on first today?</button>
+        <button type="button">Any emails I need to respond to?</button>
+        <button type="button">I just started my literature review</button>
+        <button type="button">Block off 2 hours tomorrow evening for problem set 6</button>
+      </div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" type="text" placeholder="Ask about assignments, recruiting, your calendar..." autocomplete="off" />
         <button type="submit">Send</button>
@@ -35,14 +77,14 @@
       <div id="assignment-list-view">
         <div class="panel-header">
           <div class="filter-group">
-            <select id="assignment-status-filter">
+            <select id="assignment-status-filter" aria-label="Filter assignments by status">
               <option value="active" selected>Open + In progress</option>
               <option value="open">Open</option>
               <option value="in_progress">In progress</option>
               <option value="done">Done</option>
               <option value="all">All</option>
             </select>
-            <select id="assignment-sort">
+            <select id="assignment-sort" aria-label="Sort assignments">
               <option value="due_date" selected>Sort: due date</option>
               <option value="importance">Sort: importance</option>
               <option value="difficulty">Sort: difficulty</option>
@@ -57,24 +99,37 @@
       <div id="assignment-detail-view" class="hidden">
         <button id="assignment-detail-back" class="secondary">&larr; Back</button>
 
-        <div class="detail-header">
-          <div>
-            <h2 id="detail-title"></h2>
-            <div class="card-sub" id="detail-sub"></div>
+        <section class="card detail-card">
+          <div class="detail-header">
+            <div>
+              <h2 id="detail-title"></h2>
+              <div class="card-sub" id="detail-sub"></div>
+            </div>
+            <span class="badge pts-badge" id="detail-points-badge"></span>
           </div>
-          <span class="badge pts-badge" id="detail-points-badge"></span>
+
+          <div class="detail-progress-track" id="detail-progress" role="progressbar" aria-label="Points earned" aria-valuemin="0">
+            <div class="detail-progress-fill" id="detail-progress-fill"></div>
+          </div>
+
+          <div class="detail-stats" id="detail-meta"></div>
+          <p class="card-meta hidden" id="detail-point-rule"></p>
+
+          <div class="card-actions" id="detail-actions"></div>
+        </section>
+
+        <div class="detail-section-head">
+          <h3>Milestones</h3>
+          <span class="card-meta" id="detail-milestone-count"></span>
         </div>
-
-        <div class="card-meta" id="detail-meta"></div>
-
-        <div class="card-actions" id="detail-actions"></div>
-
-        <h3>Milestones</h3>
+        <p class="card-meta milestone-lock-hint hidden" id="detail-milestone-lock">Start this assignment to check off its milestones.</p>
         <div id="detail-milestones-list" class="milestone-list"></div>
         <form id="detail-add-milestone-form" class="add-milestone-form">
-          <input type="text" id="detail-new-milestone-title" placeholder="New milestone..." autocomplete="off" />
+          <input type="text" id="detail-new-milestone-title" placeholder="New milestone..." autocomplete="off" aria-label="New milestone" />
+          <input type="text" id="detail-new-milestone-percent" class="milestone-percent-input" inputmode="numeric" placeholder="Auto %" autocomplete="off" aria-label="Percent of the assignment's points (optional)" />
           <button type="submit">Add</button>
         </form>
+        <p id="detail-milestone-error" class="modal-error hidden" role="alert"></p>
 
         <div class="danger-zone">
           <button id="detail-delete-assignment" class="danger">Delete assignment</button>
@@ -86,7 +141,7 @@
     <section id="tab-rewards" class="tab-panel">
       <h2>Awards</h2>
       <div id="award-list" class="card-list"></div>
-      <div class="panel-header">
+      <div class="panel-header add-award-row">
         <button id="add-award-btn">+ Add custom award</button>
       </div>
 
@@ -105,10 +160,14 @@
           <div class="bank-title">$$ bank</div>
           <div class="bank-value" id="dollar-bank-value">$0.00 banked</div>
           <form id="dollar-spend-form" class="dollar-spend-form">
-            <input type="number" id="dollar-spend-amount" min="0.01" step="0.01" placeholder="Amount spent" />
-            <input type="text" id="dollar-spend-reason" placeholder="What on? (optional)" />
+            <div class="money-input">
+              <span aria-hidden="true">$</span>
+              <input type="text" id="dollar-spend-amount" inputmode="decimal" placeholder="Amount spent" autocomplete="off" aria-label="Amount spent in dollars" />
+            </div>
+            <input type="text" id="dollar-spend-reason" placeholder="What on? (optional)" autocomplete="off" aria-label="What the money was spent on (optional)" />
             <button type="submit">Spend</button>
           </form>
+          <p id="dollar-spend-error" class="modal-error hidden" role="alert"></p>
           <div id="dollar-transactions" class="transaction-list"></div>
         </div>
       </div>
@@ -117,7 +176,7 @@
     <!-- Recruiting -->
     <section id="tab-recruiting" class="tab-panel">
       <div class="panel-header">
-        <select id="recruiting-sort">
+        <select id="recruiting-sort" aria-label="Sort recruiting entries">
           <option value="next_action_date" selected>Sort: next action date</option>
           <option value="stage">Sort: stage</option>
         </select>
@@ -138,17 +197,20 @@
         </select>
 
         <label>Additional rules</label>
-        <textarea id="settings-additional-rules" rows="3" placeholder="Any custom instructions for the agent..."></textarea>
+        <textarea id="settings-additional-rules" rows="3" maxlength="2000" placeholder="e.g. only give points on completion, not milestones or starting"></textarea>
+        <p class="card-meta settings-rule-effect hidden" id="settings-rule-effect"></p>
 
         <label class="checkbox-label">
           <input type="checkbox" id="settings-morning-reminders" />
           Morning reminders
         </label>
 
+        <p id="settings-error" class="modal-error hidden" role="alert"></p>
         <button type="submit">Save preferences</button>
       </form>
     </section>
   </main>
+  </div>
 
   <!-- First-time setup modal -->
   <div id="setup-modal" class="modal-overlay hidden">
@@ -163,7 +225,7 @@
         </select>
 
         <label>Any additional rules for the agent? (optional)</label>
-        <textarea id="setup-additional-rules" rows="3" placeholder="e.g. never email professors after 9pm"></textarea>
+        <textarea id="setup-additional-rules" rows="3" maxlength="2000" placeholder="e.g. never email professors after 9pm"></textarea>
 
         <label class="checkbox-label">
           <input type="checkbox" id="setup-morning-reminders" checked />
@@ -185,8 +247,12 @@
 
   <!-- Redeem confirmation popup -->
   <div id="redeem-modal" class="modal-overlay hidden">
-    <div class="modal">
-      <h2>Reward redeemed!</h2>
+    <div class="modal redeem-card" role="dialog" aria-modal="true" aria-labelledby="redeem-modal-title">
+      <svg class="redeem-check" viewBox="0 0 52 52" aria-hidden="true">
+        <circle cx="26" cy="26" r="23" pathLength="1" />
+        <path d="M15 27l8 8 15-16" pathLength="1" />
+      </svg>
+      <h2 id="redeem-modal-title">Reward redeemed!</h2>
       <p id="redeem-modal-body"></p>
       <div class="modal-actions">
         <button id="redeem-modal-close">OK</button>
@@ -194,6 +260,8 @@
     </div>
   </div>
 
+  <script src="/static/select.js"></script>
+  <script src="/static/form-fields.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

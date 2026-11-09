@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+credentials.json
+token.json
+data/
+venv/
+.venv/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
