@@ -1,5 +1,7 @@
 # Mill-E Agentic Organizer
 
+**[Try the live demo](https://mill-e-agentic-organizer.fly.dev)**: no signup needed. Each visitor gets a private sandbox of sample data.
+
 A personal agent that reads your Gmail and Google Calendar, tracks assignments
 and recruiting progress in a local database, and runs on a schedule to send
 you reminders and update a points-based reward system.
