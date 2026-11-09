@@ -213,7 +213,8 @@ chatForm.addEventListener("submit", async (e) => {
   appendChatMsg(message, "user");
   const pendingEl = appendTypingIndicator();
   try {
-    const { reply } = await api("/chat", { method: "POST", body: JSON.stringify({ message }) });
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const { reply } = await api("/chat", { method: "POST", body: JSON.stringify({ message, timezone }) });
     pendingEl.classList.remove("typing");
     typeChatHtml(pendingEl, formatChatText(reply));
   } catch (err) {

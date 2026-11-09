@@ -48,6 +48,7 @@ def _chat_history() -> list:
 
 class ChatMessage(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    timezone: str = Field(default="", max_length=64)
 
 
 class MilestoneIn(BaseModel):
@@ -128,7 +129,7 @@ def chat(body: ChatMessage):
             raise HTTPException(status_code=429, detail=limit_reason)
     history = _chat_history()
     try:
-        reply, updated_history = run_agent(body.message, history=history)
+        reply, updated_history = run_agent(body.message, history=history, timezone=body.timezone)
     except Exception:
         logger.exception("Agent run failed")
         raise HTTPException(status_code=503, detail="The assistant is unavailable right now. Please try again.")

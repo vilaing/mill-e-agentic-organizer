@@ -3,19 +3,9 @@
 Each one is expected to fail today. strict=True makes the suite report when a
 gap gets fixed, so this list can't quietly go out of date.
 """
-import datetime as dt
-
 import pytest
 
-from src import agent
 from src.tools import db_tool
-
-
-@pytest.mark.xfail(strict=True, reason="The model is never told today's date, so 'tomorrow' is a guess.")
-def test_system_prompt_states_todays_date(db):
-    today = dt.date.today()
-    prompt = agent._system_prompt()
-    assert today.isoformat() in prompt or today.strftime("%B") + f" {today.day}" in prompt
 
 
 @pytest.mark.xfail(strict=True, reason="The 2-50 limit on add_points is only a suggestion in the tool description.")

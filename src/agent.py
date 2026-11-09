@@ -9,6 +9,8 @@ Run directly:
 """
 import sys
 import json
+import datetime as dt
+from zoneinfo import ZoneInfo
 import anthropic
 from src import demo, point_rules
 from src.config import ANTHROPIC_API_KEY, CLAUDE_MODEL, DEMO_MODE
@@ -92,8 +94,22 @@ def _active_dispatch() -> dict:
     return _SIGNED_IN_DISPATCH if demo.google_email() else _SANDBOX_DISPATCH
 
 
-def _system_prompt() -> str:
+def _date_context(timezone: str) -> str:
+    """The model has no clock, so each run states the date in the user's time zone."""
+    try:
+        zone = ZoneInfo(timezone) if timezone else None
+    except (KeyError, ValueError, OSError):  # client input: fall back to server time
+        zone = None
+    now = dt.datetime.now(zone)
+    context = f"\nToday is {now:%A, %B} {now.day}, {now.year}."
+    if zone:
+        context += f" The user's time zone is {zone.key}."
+    return context + ' Use this to resolve relative dates like "tomorrow".\n'
+
+
+def _system_prompt(timezone: str = "") -> str:
     prompt = SYSTEM_PROMPT + demo.system_prompt_addendum() if DEMO_MODE else SYSTEM_PROMPT
+    prompt += _date_context(timezone)
     rules = db_tool.get_preferences()["additional_rules"].strip()
     if rules:
         prompt += (
@@ -117,7 +133,8 @@ def run_tool(name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-def run_agent(user_prompt: str, history: list | None = None, max_turns: int = 8) -> tuple[str, list]:
+def run_agent(user_prompt: str, history: list | None = None, max_turns: int = 8,
+              timezone: str = "") -> tuple[str, list]:
     """Run one turn of the agent loop.
 
     `history` is the prior conversation (as returned by a previous call) so
@@ -127,7 +144,7 @@ def run_agent(user_prompt: str, history: list | None = None, max_turns: int = 8)
     """
     messages = list(history) if history else []
     messages.append({"role": "user", "content": user_prompt})
-    system_prompt = _system_prompt()
+    system_prompt = _system_prompt(timezone)
 
     for _ in range(max_turns):
         response = client.messages.create(
